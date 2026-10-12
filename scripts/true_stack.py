@@ -4,6 +4,8 @@
     python scripts/true_stack.py provision                      # synthetic members + one-time claim codes
     python scripts/true_stack.py down
     python scripts/true_stack.py env mum                         # env block a region needs for AUTH_ENABLED
+    python scripts/true_stack.py members                         # demo members (name, role, actor id)
+    python scripts/true_stack.py revoke Bob --reason "left team" # revoke a member; regions refuse them in seconds
 
 Nothing here is needed unless AUTH_ENABLED=true. Defaults keep the existing ports: issuer 4001, sidecars
 4101 / 4102 / 4103 (mum / pun / del). Tests pass their own base ports and data dir to stay isolated from a
@@ -187,8 +189,9 @@ class Stack:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("cmd", choices=["up", "down", "provision", "env", "reset"])
-    ap.add_argument("region", nargs="?")
+    ap.add_argument("cmd", choices=["up", "down", "provision", "env", "reset", "members", "revoke"])
+    ap.add_argument("region", nargs="?", help="region for `env`; member name or actor id for `revoke`")
+    ap.add_argument("--reason", default="revoked by admin")
     ap.add_argument("--regions", default=",".join(DEFAULT_REGIONS))
     ap.add_argument("--provision", action="store_true")
     ap.add_argument("--data-dir")
@@ -212,6 +215,24 @@ def main(argv=None):
     elif a.cmd == "env":
         for k, v in st.region_env(a.region or st.regions[0]).items():
             print(f"{k}={v}")
+    elif a.cmd in ("members", "revoke"):
+        mf = st.data / "members.json"
+        members = json.loads(mf.read_text()) if mf.exists() else {}
+        if a.cmd == "members":
+            for name, m in members.items():
+                print(f"{name:22} {m.get('role', '?'):11} {m['actor_id']}")
+            return
+        if not a.region:
+            ap.error("revoke needs a member name or actor id, e.g.  revoke Bob")
+        who = a.region.lower()
+        hits = [m for n, m in members.items() if who in (n.lower(), n.split(" ")[0].lower(), m["actor_id"].lower())]
+        if len(hits) != 1:
+            sys.exit(f"no single member matches {a.region!r}; run `members` to list them")
+        status, body = st.admin("POST", f"/v1/syncshield/members/{hits[0]['actor_id']}/revoke", {"reason": a.reason})
+        if status != 200:
+            sys.exit(f"revoke failed: HTTP {status} {body}")
+        print(f"revoked {a.region}: {body['revokedCredentials']} credential(s), status version {body['statusVersion']}")
+        print("Regions refuse their existing sessions after the next status refresh (about 5 s by default).")
     elif a.cmd == "down":
         st.down()
         print("stopped")
