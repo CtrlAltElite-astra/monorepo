@@ -52,6 +52,20 @@ There is no server-side load balancer: the browser SDK (`src/sdk/syncshieldClien
 
 (Before this order was fixed, survivors were ranked by measured ping. On one machine Pune and Delhi differ by a millisecond of noise, so the failover target changed from run to run.)
 
+### Limits, scaling and more regions
+
+None of this is on in a real region until you switch it on, and the simulator (`?mode=mock`) implements all of it, so it can be shown without the real backend. Contract: section 8 of `contracts/contracts.md`.
+
+- **Each shopper's own limit.** A bucket per shopper (the simulator starts with 10 requests at once, then one more every second). Under each shopper a *requests left* meter shows what the last answer said (`X-RateLimit-Remaining`); *Spam as <shopper>* (Network tab) sends 25 quick adds. A refusal (429) is a calm amber notice, counted as "refused by the limit", never an error.
+- **Limiting a region.** *Limit this region* (Network tab) makes a region answer 503 above a number of writes a second. The browser sends the write to the next region at once, avoids the busy one for 2, 4, then at most 5 seconds, and the route line says why ("Mumbai is at its write limit...").
+- **Home regions.** Each shopper's requests go to their home region first (Alice and Bob Mumbai, Chitra and Dev Pune, Esha Delhi); the fixed order is the fallback. A *Home regions* switch turns it off. Every region card has a *writes per second* bar, reported by the region (`status.load`) or, when it does not report it, measured from the region's own write counter.
+- **Power.** A low / medium / high dial on each region card (1, 8 or 32 writes per batch) calls `POST /admin/config` and shows the batch the region reports.
+- **Another region.** An *Add Bengaluru* card starts it through the chaos agent. It joins empty, must answer three health checks before the browser trusts it, and converges to the same digest. In live mode it joins the first time it answers a health check.
+- **Burst and Spread** (Network tab) write 300 or 1000 real cart notes to one region, or divide 1000 over every region, then time how long all regions need to agree. Each run is listed in the Scaling tab.
+- **Scaling tab.** The two result cards ("one region, high power", "three regions, low power") and the bars come only from `public/scale-result.json`, written by the benchmark script of the scaling plan; without that file they say "not measured yet", and a mode the benchmark could not run says "unsupported". The simulator's own runs are modelled, so only their shape counts.
+- **Real backends.** Against a v1.1 backend the controls say they are not supported instead of pretending ("Not reported" under the power dial). Meters per shopper need one API key per shopper: copy `VITE_SHOPPER_KEYS` from `.env.example` and list the same keys in each region's `API_KEYS`; with one shared key every shopper shares one allowance.
+- **Left for the identity lane:** an empty `#identity-slot` in the shop column, a fourth Tamper row (shown only when the backend reports sign-in), and an adults-only item behind `?restricted=1`.
+
 ### Motion
 
 Animation is on by default. The **Motion** switch in the navigation turns it off (and back on) and remembers the choice. The browser's own "reduce motion" setting is deliberately not a silent kill switch here: with it, the whole page used to be static with no way to turn animation back on.
@@ -62,11 +76,11 @@ All counts and confirmations come from live responses or this browser's session.
 
 ```powershell
 npm run typecheck
-npm test             # 57 tests: derive, the simulated world, the SDK (failover, outbox, idempotent retries)
+npm test             # 105 tests: derive, the simulated world, the SDK (failover, outbox, idempotent retries), the limits, power and the fourth region, the helpers
 npm run build
 ```
 
-Last full run (13 October 2026): typecheck, 57 tests and the production build pass. A browser run against **three isolated real
+Last full run (13 October 2026, after the scaling controls): typecheck, 105 tests and the production build pass. A browser run against **three isolated real
 backends** (throwaway databases and signing keys on ports 18101-18103, so the demo data on 8001-8003 is untouched) passed every stage:
 
 1. a real signed cart created on the region the browser was actually serving from, then replicated to the other two;
