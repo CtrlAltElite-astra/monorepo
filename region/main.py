@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from region import config, store
 from region.api import routes_reports, routes_status
-from region.sync import client, routes_admin, routes_sync
+from region.sync import carry, client, routes_admin, routes_sync
 
 
 @asynccontextmanager
@@ -28,3 +28,5 @@ app.include_router(routes_reports.router)
 app.include_router(routes_status.router)
 app.include_router(routes_sync.router)
 app.include_router(routes_admin.router)
+app.include_router(carry.router)
+

@@ -27,11 +27,66 @@ def region_env(region: str, regions: list) -> dict:
     return env
 
 
+def check_empty_db_guard(region: str) -> None:
+    """Refuse to start an empty DB under a known region id (Section 6.10).
+    A wiped DB starting fresh would reuse sequence numbers, corrupting watermarks.
+    """
+    if os.environ.get("ALLOW_EMPTY_DB", "0") == "1":
+        return
+    db_file = ROOT / "data" / f"{region}.db"
+    import sqlite3
+    own_has_events = False
+    if db_file.is_file() and db_file.stat().st_size > 0:
+        try:
+            con = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
+            cnt = con.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+            con.close()
+            if cnt > 0:
+                own_has_events = True
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
+            pass
+
+    if own_has_events:
+        return  # Own database has events, safe to start and resume sequence
+
+    # If own DB has NO events, check if any peer database already has recorded events for this origin
+    data_dir = ROOT / "data"
+    if data_dir.exists():
+        for other_db in data_dir.glob("*.db"):
+            if other_db.name == f"{region}.db":
+                continue
+            try:
+                con = sqlite3.connect(f"file:{other_db}?mode=ro", uri=True)
+                row = con.execute("SELECT contiguous, max_seen FROM origin_progress WHERE origin=?", (region,)).fetchone()
+                if row and (row[0] > 0 or row[1] > 0):
+                    con.close()
+                    raise RuntimeError(
+                        f"Refusing to start empty DB for known region '{region}'. "
+                        f"Peer DB '{other_db.name}' recorded progress for origin '{region}' (contiguous={row[0]}, max_seen={row[1]}). "
+                        f"Sequence numbers would be reused! (PDF 2 Section 6.10)"
+                    )
+                ev_row = con.execute("SELECT 1 FROM events WHERE origin=? LIMIT 1", (region,)).fetchone()
+                con.close()
+                if ev_row:
+                    raise RuntimeError(
+                        f"Refusing to start empty DB for known region '{region}'. "
+                        f"Peer DB '{other_db.name}' holds events from origin '{region}'. "
+                        f"Sequence numbers would be reused! (PDF 2 Section 6.10)"
+                    )
+            except sqlite3.OperationalError:
+                pass
+
+
 def spawn(region: str, regions: list) -> subprocess.Popen:
+    check_empty_db_guard(region)
     (ROOT / "data").mkdir(exist_ok=True)
+    (ROOT / "run").mkdir(exist_ok=True)
     cmd = [sys.executable, "-m", "uvicorn", "region.main:app", "--host", "127.0.0.1",
            "--port", str(PORTS[region]), "--workers", "1", "--log-level", "warning"]
-    return subprocess.Popen(cmd, cwd=ROOT, env=region_env(region, regions))
+    p = subprocess.Popen(cmd, cwd=ROOT, env=region_env(region, regions))
+    pid_file = ROOT / "run" / f"{region}.pid"
+    pid_file.write_text(str(p.pid), encoding="utf-8")
+    return p
 
 
 if __name__ == "__main__":
@@ -42,3 +97,4 @@ if __name__ == "__main__":
         sys.exit(p.wait())
     except KeyboardInterrupt:
         p.terminate()
+

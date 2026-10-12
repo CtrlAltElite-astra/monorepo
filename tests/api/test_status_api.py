@@ -58,8 +58,15 @@ def test_digests_are_the_engine_digests_and_stable(create, client):
 
 def test_risk_and_queues_are_present_and_null_until_other_lanes_fill_them(client):
     s = status(client)
-    assert "risk" in s and s["risk"] is None
-    assert "queues" in s and s["queues"] is None
+    assert "risk" in s
+    if s["risk"] is not None:
+        assert isinstance(s["risk"], dict)
+        assert {"unreplicated", "critical_unreplicated", "oldest_age_ms"} <= set(s["risk"])
+    assert "queues" in s
+    if s["queues"] is not None:
+        assert isinstance(s["queues"], dict)
+        assert {"P0", "P1", "P2"} <= set(s["queues"])
+
 
 
 def test_never_contacted_peer_counts_as_unreachable(client):

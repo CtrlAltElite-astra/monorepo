@@ -415,3 +415,247 @@ def test_t14_priority_overtaking_under_throttling():
             for p in procs.values():
                 p.kill()
                 p.wait()
+
+
+def test_healthz_and_events_has_and_carry():
+    """Verify GET /healthz, POST /v1/events/has, and POST /v1/carry."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        procs = {
+            "mum": start_node("mum", tmp, {"pun": URL["pun"]}),
+            "pun": start_node("pun", tmp, {"mum": URL["mum"]}),
+        }
+        try:
+            for r in ("mum", "pun"):
+                wait_healthy(r)
+
+            # 1. GET /healthz
+            hz = httpx.get(f"{URL['mum']}/healthz").json()
+            assert hz["region"] == "mum"
+            assert hz["ok"] is True
+            assert hz["level"] in ("HEALTHY", "CONSTRAINED", "ISOLATED", "RECOVERING")
+            assert isinstance(hz["ts"], int)
+
+            # 2. Create a report on mum
+            r_rep = httpx.post(
+                f"{URL['mum']}/v1/reports",
+                headers=KEY,
+                json={"title": "Carry Test Cart", "category": "shelter", "severity": 1},
+                timeout=3,
+            ).json()
+
+            ev_id = r_rep.get("event_id") or "mum:1"
+
+            # 3. POST /v1/events/has on pun before sync
+            has_resp = httpx.post(
+                f"{URL['pun']}/v1/events/has",
+                headers=KEY,
+                json={"ids": [ev_id, "nonexistent:999"]},
+                timeout=3,
+            ).json()
+            assert "missing" in has_resp
+            assert "nonexistent:999" in has_resp["missing"]
+
+            # 4. POST /v1/carry directly to pun with a valid event
+            ev_carried = {
+                "v": 1,
+                "event_id": "car-origin:1",
+                "origin": "car-origin",
+                "seq": 1,
+                "report_id": "R-car-1",
+                "type": "CREATE",
+                "field": None,
+                "value": {"title": "Carried Cart", "category": "cart", "severity": 1},
+                "supersedes": [],
+                "hlc": [int(time.time() * 1000), 0],
+                "priority": 1,
+                "actor": "officer-car",
+                "reason": None,
+                "wall": "2026-10-12T15:00:00+05:30",
+                "sig": None,
+            }
+            ev_carried["hash"] = canonical.event_hash(ev_carried)
+
+            carry_resp = httpx.post(
+                f"{URL['pun']}/v1/carry",
+                headers=KEY,
+                json={"events": [ev_carried]},
+                timeout=3,
+            ).json()
+            assert "results" in carry_resp
+            res0 = carry_resp["results"][0]
+            assert res0["event_id"] == "car-origin:1"
+            assert res0["result"] == "new"
+
+            # Re-carrying same event returns dup
+            carry_dup = httpx.post(
+                f"{URL['pun']}/v1/carry",
+                headers=KEY,
+                json={"events": [ev_carried]},
+                timeout=3,
+            ).json()
+            assert carry_dup["results"][0]["result"] == "dup"
+
+        finally:
+            for p in procs.values():
+                p.kill()
+                p.wait()
+
+
+def test_t18_carry_integrity():
+    """T18: Tampered hash or bad shape in carry is rejected and quarantined."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        procs = {"mum": start_node("mum", tmp, {})}
+        try:
+            wait_healthy("mum")
+
+            # Bad hash
+            ev_bad_hash = {
+                "v": 1,
+                "event_id": "fake:1",
+                "origin": "fake",
+                "seq": 1,
+                "report_id": "R-fake-1",
+                "type": "CREATE",
+                "field": None,
+                "value": {"title": "Fake Cart", "category": "cart", "severity": 1},
+                "supersedes": [],
+                "hlc": [int(time.time() * 1000), 0],
+                "priority": 1,
+                "actor": "bad-actor",
+                "reason": None,
+                "wall": "2026-10-12T15:00:00+05:30",
+                "sig": None,
+                "hash": "0000000000000000000000000000000000000000000000000000000000000000",
+            }
+            res_bad = httpx.post(
+                f"{URL['mum']}/v1/carry",
+                headers=KEY,
+                json={"events": [ev_bad_hash]},
+                timeout=3,
+            ).json()
+            assert res_bad["results"][0]["result"] == "rejected"
+            assert res_bad["results"][0]["reason"] == "bad_hash"
+
+            # Bad shape
+            ev_bad_shape = {"event_id": "incomplete"}
+            res_shape = httpx.post(
+                f"{URL['mum']}/v1/carry",
+                headers=KEY,
+                json={"events": [ev_bad_shape]},
+                timeout=3,
+            ).json()
+            assert res_shape["results"][0]["result"] == "rejected"
+            assert res_shape["results"][0]["reason"] == "shape"
+
+        finally:
+            for p in procs.values():
+                p.kill()
+                p.wait()
+
+
+def test_t21_ladder_transitions():
+    """T21: Slow -> CONSTRAINED; cut -> ISOLATED within 5s; heal -> RECOVERING -> HEALTHY."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        procs = {
+            "mum": start_node("mum", tmp, {"pun": URL["pun"]}),
+            "pun": start_node("pun", tmp, {"mum": URL["mum"]}),
+        }
+        try:
+            for r in ("mum", "pun"):
+                wait_healthy(r)
+
+            # Initially HEALTHY or RECOVERING transitioning to HEALTHY
+            s0 = httpx.get(f"{URL['mum']}/v1/status").json()
+            assert s0["level"] in ("HEALTHY", "RECOVERING")
+
+            # 1. Slow link -> CONSTRAINED
+            httpx.post(f"{URL['mum']}/admin/links/pun", json={"mode": "slow", "delay_ms": 50, "rate_bps": 1000}, headers=KEY)
+            s_slow = httpx.get(f"{URL['mum']}/v1/status").json()
+            assert s_slow["level"] == "CONSTRAINED"
+
+            # 2. Cut link -> ISOLATED within 5s
+            httpx.post(f"{URL['mum']}/admin/links/pun", json={"mode": "down"}, headers=KEY)
+            httpx.post(f"{URL['pun']}/admin/links/mum", json={"mode": "down"}, headers=KEY)
+
+            # Poll status until ISOLATED
+            poll_until(lambda: httpx.get(f"{URL['mum']}/v1/status").json()["level"] == "ISOLATED", timeout=6)
+
+            # 3. Heal link -> transitions back
+            httpx.post(f"{URL['mum']}/admin/links/pun", json={"mode": "up"}, headers=KEY)
+            httpx.post(f"{URL['pun']}/admin/links/mum", json={"mode": "up"}, headers=KEY)
+
+            poll_until(lambda: httpx.get(f"{URL['mum']}/v1/status").json()["level"] in ("RECOVERING", "HEALTHY"), timeout=6)
+
+        finally:
+            for p in procs.values():
+                p.kill()
+                p.wait()
+
+
+def test_t22_data_at_risk():
+    """T22: Cut link, write 5 events -> unreplicated = 5; after heal = 0."""
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        procs = {
+            "mum": start_node("mum", tmp, {"pun": URL["pun"]}),
+            "pun": start_node("pun", tmp, {"mum": URL["mum"]}),
+        }
+        try:
+            for r in ("mum", "pun"):
+                wait_healthy(r)
+
+            # Cut link mum <-> pun
+            httpx.post(f"{URL['mum']}/admin/links/pun", json={"mode": "down"}, headers=KEY)
+            httpx.post(f"{URL['pun']}/admin/links/mum", json={"mode": "down"}, headers=KEY)
+
+            # Write 5 events on mum
+            rep = httpx.post(f"{URL['mum']}/v1/reports", headers=KEY, json={"title": "Risk Base", "category": "shelter", "severity": 1}).json()
+            rid = rep["report"]["report_id"]
+
+            for i in range(4):
+                httpx.post(f"{URL['mum']}/v1/reports/{rid}/notes", headers=KEY, json={"text": f"item {i}"})
+
+            # Check status on mum: unreplicated == 5
+            s_cut = httpx.get(f"{URL['mum']}/v1/status").json()
+            assert s_cut["risk"]["unreplicated"] == 5
+
+            # Heal link
+            httpx.post(f"{URL['mum']}/admin/links/pun", json={"mode": "up"}, headers=KEY)
+            httpx.post(f"{URL['pun']}/admin/links/mum", json={"mode": "up"}, headers=KEY)
+
+            # Wait for replication to catch up -> unreplicated drops to 0
+            poll_until(lambda: httpx.get(f"{URL['mum']}/v1/status").json()["risk"]["unreplicated"] == 0, timeout=8)
+
+        finally:
+            for p in procs.values():
+                p.kill()
+                p.wait()
+
+
+def test_empty_db_guard_refuses_sequence_reuse():
+    """Section 6.10: refuse to start empty DB under a known region ID whose events peers already hold."""
+    from scripts.run_one import check_empty_db_guard
+    import sqlite3
+    with tempfile.TemporaryDirectory() as tmp:
+        data_dir = Path(tmp) / "data"
+        data_dir.mkdir()
+
+        # Create peer db pun.db that has seen progress from origin "mum"
+        pun_db = data_dir / "pun.db"
+        con = sqlite3.connect(pun_db)
+        con.execute("CREATE TABLE origin_progress (origin TEXT PRIMARY KEY, contiguous INT, max_seen INT)")
+        con.execute("CREATE TABLE events (event_id TEXT PRIMARY KEY, origin TEXT)")
+        con.execute("INSERT INTO origin_progress VALUES ('mum', 5, 5)")
+        con.commit()
+        con.close()
+
+        # Temporarily monkeypatch ROOT in run_one to tmp
+        import scripts.run_one as ro
+        orig_root = ro.ROOT
+        ro.ROOT = Path(tmp)
+        try:
+            with pytest.raises(RuntimeError) as exc_info:
+                check_empty_db_guard("mum")
+            assert "Refusing to start empty DB for known region 'mum'" in str(exc_info.value)
+        finally:
+            ro.ROOT = orig_root
+
