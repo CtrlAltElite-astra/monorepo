@@ -47,7 +47,9 @@ def test_create_returns_201_with_first_event_id(create):
         "severity": 3, "status": "open", "assigned_team": None, "people_estimate": None, "notes": [],
     }
     assert rep["live"]["severity"] == ["mum:1"] and rep["conflicts"] == [] and rep["incomplete"] is False
-    assert body["consistency"] == rep["consistency"] == {"replication": "LOCAL_ONLY"}
+    # pun is configured but has never confirmed anything and was never reached
+    assert body["consistency"] == rep["consistency"] == {
+        "replication": "LOCAL_ONLY", "confirmed_by": [], "awaiting": ["pun"], "stale_possible": True}
 
 
 def test_201_is_returned_only_after_commit(create, region):
@@ -273,6 +275,71 @@ def test_replication_badge_follows_what_peers_confirm(create, client, monkeypatc
     assert badge() == "REPLICATED"
     patch(client, "R-mum-1", "severity", 4)  # new event mum:2 that nobody has yet
     assert badge() == "LOCAL_ONLY"
+
+
+def test_consistency_block_names_who_confirmed_and_who_is_awaited(create, client, monkeypatch):
+    import dataclasses
+    monkeypatch.setattr(config, "settings", dataclasses.replace(
+        config.settings, peers={"pun": "http://127.0.0.1:9", "del": "http://127.0.0.1:9"}))
+    create()
+    cons = lambda: client.get("/v1/reports/R-mum-1").json()["consistency"]
+    assert (cons()["confirmed_by"], cons()["awaiting"]) == ([], ["del", "pun"])  # sorted, stable
+    state.save_peer_view("pun", {"mum": 1})
+    assert (cons()["confirmed_by"], cons()["awaiting"]) == (["pun"], ["del"])
+    state.save_peer_view("del", {"mum": 1})
+    assert (cons()["confirmed_by"], cons()["awaiting"]) == (["del", "pun"], [])
+
+
+def test_stale_possible_tracks_peer_reachability(create, client):
+    create()
+    stale = lambda: client.get("/v1/reports/R-mum-1").json()["consistency"]["stale_possible"]
+    assert stale() is True        # pun never reached: a newer edit may exist there
+    state.mark_ok("pun")
+    assert stale() is False       # heard from pun just now
+    for _ in range(3):
+        state.mark_error("pun", "timeout")
+    assert stale() is True        # failing again: the view may be stale
+    # the list endpoint reports the same thing per report
+    assert client.get("/v1/reports").json()[0]["consistency"]["stale_possible"] is True
+
+
+def test_a_region_with_no_peers_is_never_stale(create, client, monkeypatch):
+    import dataclasses
+    monkeypatch.setattr(config, "settings", dataclasses.replace(config.settings, peers={}))
+    create()
+    assert client.get("/v1/reports/R-mum-1").json()["consistency"] == {
+        "replication": "LOCAL_ONLY", "confirmed_by": [], "awaiting": [], "stale_possible": False}
+
+
+# ---- history (audit trail) ------------------------------------------------------------
+def test_history_lists_every_event_in_hlc_order_with_supersedes(create, client, region, mk_event):
+    create()
+    patch(client, "R-mum-1", "severity", 5)
+    client.post("/v1/reports/R-mum-1/notes", json={"text": "two trapped"}, headers=KEY)
+    remote = mk_event("pun", 1, "SET", "R-mum-1", field="status", value="assigned",
+                      supersedes=["mum:1"], hlc=(1, 0))  # an old remote event sorts first
+    ingest.ingest([remote], source="pun")
+    h = client.get("/v1/reports/R-mum-1/history")
+    assert h.status_code == 200
+    events = h.json()
+    assert [e["event_id"] for e in events] == ["pun:1", "mum:1", "mum:2", "mum:3"]
+    by_id = {e["event_id"]: e for e in events}
+    assert by_id["mum:2"]["supersedes"] == ["mum:1"] and by_id["pun:1"]["supersedes"] == ["mum:1"]
+    assert by_id["mum:2"]["actor"] == "officer-mum-1" and by_id["mum:3"]["type"] == "NOTE"
+    clocks = [(e["hlc"][0], e["hlc"][1], e["origin"], e["seq"]) for e in events]
+    assert clocks == sorted(clocks)
+    for e in events:  # exactly what was stored: every hash still verifies
+        assert e["hash"] == canonical.event_hash(e)
+    assert events == sorted(stored_events(region), key=lambda e: (e["hlc"][0], e["hlc"][1], e["origin"], e["seq"]))
+
+
+def test_history_of_an_unknown_report_is_404(client):
+    assert client.get("/v1/reports/R-nope-1/history").status_code == 404
+
+
+def test_history_is_available_for_a_report_still_waiting_for_its_create(client, mk_event):
+    ingest.ingest([mk_event("pun", 10, "SET", "R-pun-9", field="severity", value=4)], source="pun")
+    assert [e["event_id"] for e in client.get("/v1/reports/R-pun-9/history").json()] == ["pun:10"]
 
 
 # ---- acceptance 3: a dead peer never affects writes ------------------------------------

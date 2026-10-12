@@ -41,6 +41,34 @@ def test_report_fixture_is_what_derive_produces():
     assert r["consistency"]["replication"] in schemas.REPLICATION_STATES
 
 
+def test_consistency_block_keys_match_fixture_and_live_api(client, create):
+    assert set(load("report.json")["consistency"]) == set(schemas.CONSISTENCY_KEYS)
+    create()
+    live = client.get("/v1/reports/R-mum-1").json()["consistency"]
+    assert set(live) == set(schemas.CONSISTENCY_KEYS)
+    assert live["replication"] in schemas.REPLICATION_STATES
+
+
+def test_contract_docs_cover_history_roles_and_the_consistency_block():
+    doc = (ROOT / "contracts" / "contracts.md").read_text(encoding="utf-8")
+    for needle in ("GET /v1/reports/{id}/history", "### 3.1 Roles", "### 4.0 Report `consistency` block",
+                   "confirmed_by", "awaiting", "stale_possible", "401", "403"):
+        assert needle in doc, f"contracts.md is missing: {needle}"
+    # history is implemented now, so it must no longer be listed as reserved
+    reserved = doc.split("Reserved for PDF 2 (do not reuse):")[1].split("###")[0]
+    assert "/history" not in reserved
+
+
+def test_partner_contract_matches_the_adapter_interface():
+    from region.trust import adapter
+    doc = (ROOT / "contracts" / "partner-contract.md").read_text(encoding="utf-8")
+    for endpoint in ("/trust/keys", "/credentials/verify", "/credentials/status-list", "/anchor"):
+        assert endpoint in doc
+    for method in ("verify_actor", "check_evidence", "anchor", "peer_trust"):
+        assert method in doc and callable(getattr(adapter.TrustAdapter, method))
+    assert "must never block a local write" in doc
+
+
 def test_status_fixture_carries_the_additive_blocks():
     s = load("status.json")
     assert set(s["risk"]) == set(schemas.RISK_KEYS) and set(s["queues"]) == set(schemas.QUEUE_KEYS)

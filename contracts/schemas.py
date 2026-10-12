@@ -25,6 +25,8 @@ LEVELS = ("HEALTHY", "SYNCING", "CONSTRAINED", "ISOLATED", "RECOVERING", "OVERLO
 
 # Report consistency.replication
 REPLICATION_STATES = ("LOCAL_ONLY", "PARTIAL", "REPLICATED")
+# Every key of a report's consistency block (contracts.md 4.0)
+CONSISTENCY_KEYS = ("replication", "confirmed_by", "awaiting", "stale_possible")
 
 # Optional, nullable /v1/status blocks (null until the owning lane fills them in).
 RISK_KEYS = ("unreplicated", "critical_unreplicated", "oldest_age_ms")  # data-at-risk meter

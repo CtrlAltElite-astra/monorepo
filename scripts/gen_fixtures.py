@@ -26,7 +26,8 @@ out.mkdir(parents=True, exist_ok=True)
 
 v = derive(events)
 report = {"report_id": "R-mum-1", "state": v["state"], "live": v["live"], "conflicts": v["conflicts"],
-          "incomplete": v["incomplete"], "consistency": {"replication": "LOCAL_ONLY"}}
+          "incomplete": v["incomplete"],
+          "consistency": {"replication": "LOCAL_ONLY", "confirmed_by": [], "awaiting": ["pun"], "stale_possible": True}}
 (out / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 status = {"region": "mum", "schema_version": 1, "policy_version": 0, "heads": {"mum": 2, "pun": 0},
           "event_count": 2, "event_digest": "sha256-hex", "state_hash": "sha256-hex",

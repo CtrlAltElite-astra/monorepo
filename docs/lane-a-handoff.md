@@ -4,7 +4,7 @@ Purpose: let any engineer or coding agent continue Lane A from exactly where it 
 other context. Read this file first, then the two build-plan PDFs (Basic = PDF 1, Main = PDF 2).
 **Keep the "Progress log" and the checklists up to date after every milestone.**
 
-Last updated: 2026-10-12 (Basic build complete and pushed; PDF 2 Phase 1 not started)
+Last updated: 2026-10-12 (Basic build merged to `main`; PDF 2 Phase 1 for Lane A built and tested on branch `a/phase1-roles-history`, awaiting PR/merge)
 
 ---
 
@@ -38,9 +38,12 @@ auto-generated attribution lines, and no tool names, in commit messages, PR text
 ## 3. Repo and branch
 
 - Remote: `https://github.com/CtrlAltElite-astra/monorepo` (default branch `main`).
-- `main` currently has ONE commit by Miti ("Initial commit") that already contains a working Basic
-  build for all four lanes (engine, sync, dashboard, store, API, integration tests).
-- **My branch: `a/lane-a-basic-build`** (created from `main`). All Lane A work is pushed here.
+- `main` started as ONE commit by Miti that already contained a working Basic build for all four lanes.
+  Since then merged via PRs: #1 Lane A basic build (mine), #2 Miti's dashboard/docs (`lane-c`),
+  #3 Rahil's engine tests/docs (`lane-B-basic-build`). Lane D (Simrit) had no branch yet when last checked.
+- `a/lane-a-basic-build`: merged (PR #1), done.
+- **Current branch: `a/phase1-roles-history`** (from `main` at `e732a31`): PDF 2 Phase 1 for Lane A.
+  Pushed to origin; PR not opened yet (the user opens/merges PRs; label it `contract`).
 - Working copy on the user's machine: `C:\Users\dell\Desktop\Codeastra\monorepo` (Windows 11,
   PowerShell; Python 3.14 venv at `.venv`, Node 24).
 
@@ -111,25 +114,51 @@ actor, role), `main.py` (lifespan: init DB, start pull loop), `contracts/` (enve
 **Basic build status for Lane A: COMPLETE.** All four PDF 1 acceptance checks are covered by tests and
 were observed against real processes.
 
+### PDF 2 Phase 1 (branch `a/phase1-roles-history`) — built and tested
+- [x] **Roles**: `region/trust/roles.py` (pure table: officer/supervisor write; supervisor resolves;
+      admin = /admin only, NOT a report writer; unknown role denied). `region/auth.py` gains
+      `require(action)`; the three write routes use it. 401 unknown/missing key, 403 wrong role,
+      checked before body validation, nothing stored. `require_key` kept (Simrit's `/admin` guard uses it).
+- [x] **Trust adapter interface**: `region/trust/adapter.py` (`TrustAdapter`, `AuthDecision`,
+      `EvidenceVerdict`, `AnchorReceipt`, `TrustVerdict`, default `LocalKeyAdapter`, `get_adapter`/
+      `set_adapter`). Unsupported methods return neutral results, never raise. Auth decisions already go
+      through the adapter, so the Phase 2 partner adapter only needs to be swapped in.
+- [x] **Partner contract page**: `contracts/partner-contract.md` (PROPOSED, not agreed with a partner).
+- [x] **Consistency block**: report `consistency` = `{replication, confirmed_by, awaiting, stale_possible}`
+      (`routes_reports._consistency`; reachability from `state.snapshot()` once per request).
+- [x] **`GET /v1/reports/{id}/history`**: plain array of full events in `(hlc, origin, seq)` order
+      (matches what Miti's dashboard assumed).
+- [x] **kill -9 test**: `tests/api/test_crash_recovery.py` — real process, 4 concurrent writers, hard kill
+      mid-stream; every acknowledged id present, seq gap-free and continues, views == creates, clock moves on.
+- [x] Contracts/fixtures/CHANGELOG updated (`contracts.md` 3.1 roles, 4.0 consistency, history row,
+      `schemas.CONSISTENCY_KEYS`); contract-parity tests added.
+- [x] Whole repo: `pytest tests` -> **156 passed**. Real-process check (2 regions): consistency goes
+      REPLICATED -> LOCAL_ONLY + stale on a cut -> REPLICATED after heal; history identical on both regions.
+
 ## 7. Design decisions worth knowing
 
 - Event ids are `<origin>:<seq>`; report ids are `R-<origin>-<seq of CREATE>` (no coordination).
 - Validation (`schemas.validate_field`, pydantic bounds) runs at **write time only**; received events
   are checked for shape/hash/identity only (never against business rules).
-- `consistency.replication` is computed from `peer_view`: a peer confirms a report when its last
-  summary shows `seq >= max seq per origin` of the report's events.
-- GET endpoints are unauthenticated in Basic; writes need `X-API-Key`. Roles are PDF 2 Phase 1.
+- `consistency` is computed from `peer_view`: a peer confirms a report when its last summary shows
+  `seq >= max seq per origin` of the report's events. `stale_possible` = ANY configured peer is
+  unreachable now (even one that confirmed), per PDF 2 6.8.
+- GET endpoints are unauthenticated; writes need `X-API-Key` with role officer or supervisor (admin is
+  deliberately not a report writer, per the PDF 2 role table).
+- Auth decisions go through `region.trust.adapter.get_adapter()`; tests swap it with `set_adapter`.
 - Tests patch `config.settings` (module attribute, frozen dataclass replaced with
   `dataclasses.replace`); all code reads `config.settings.<x>` at call time, so this is safe.
 
 ## 8. Known gaps / not started (PDF 2, Lane A)
 
-Phase 1: SET validation per policy, roles (officer/supervisor/admin) enforcement, `PATCH` expected/409
-(done in Basic), consistency block (`confirmed_by`, `awaiting`, `stale_possible`),
-`GET /v1/reports/{id}/history`, kill -9 test, partner adapter interface + contract page.
-Phase 2: `POST /resolve` + `GET /v1/review` (409 stale guard), Ed25519 signing (`trust/`), idempotency
-keys, real partner calls with cache + fallback. Phase 3: `/v1/metrics` writes, bounded write queue
-(OVERLOADED). Phase 4: negative security tests (T10, T13), README API samples.
+Phase 1: DONE (see section 6). Not done from Phase 1: nothing for Lane A.
+**Phase 2 (next):** `POST /v1/reports/{id}/resolve` + `GET /v1/review` (409 stale guard, role
+`supervisor`; needs Rahil's receipts/policy v1 in `derive`), Ed25519 per-region signing in `trust/`
+(`sig` over the hex hash; verify hook in Simrit's ingest; tests T10), idempotency keys
+(`Idempotency-Key` header, table already exists), `observed` field on events (CLOSE_VS_NEW_INFO),
+event `auth` block, real partner HTTP adapter with cache + fallback (T13).
+Phase 3: `/v1/metrics` writes, bounded write queue + `OVERLOADED`, `/admin/config` coordination with Simrit.
+Phase 4: negative security tests (T10, T13), README API samples with curl.
 
 ## 8b. Findings for other lanes (not Lane A files; do not fix here, tell the owner)
 
@@ -142,6 +171,22 @@ keys, real partner calls with cache + fallback. Phase 3: `/v1/metrics` writes, b
   Honest, but the dashboard will flash ISOLATED at start-up.
 - **Rahil / Simrit**: `/v1/status` now returns `risk` and `queues` (null). Fill them by adding
   `"risk"` / `"queues"` keys to the dict returned by `state.snapshot()`; no change needed in the route.
+- (Fixed by Miti already: `run_regions.py` no longer stops every region when one dies.)
+
+### Asks created by Phase 1 (for the owners; not done here because they are not Lane A files)
+- **Simrit** (`region/config.py`, `scripts/run_one.py`): provision default keys so roles can be demoed:
+  `dev-officer:officer-<r>-1:officer`, `dev-supervisor:supervisor-<r>-1:supervisor`,
+  `dev-admin:admin-<r>-1:admin`. Today only `dev-officer` exists, so nobody can act as supervisor.
+- **Simrit** (`region/sync/routes_admin.py`): when ready, gate `/admin/*` with `require("admin")` from
+  `region.auth` instead of `require_key`. NOT done yet on purpose: the dashboard and
+  `tests/integration` call `/admin/links` with the officer key, so switching needs the admin key
+  provisioned and those callers updated in the same change.
+- **Miti**: `VITE_SUPERVISOR_KEY` (resolve button) should be `dev-supervisor` once that key exists;
+  an officer key gets 403 on resolve. Reports now carry `consistency.confirmed_by/awaiting/stale_possible`
+  (the drawer already reads `stale_possible`).
+- **Simrit**: `scripts/mock_partner.py` should implement the endpoints in `contracts/partner-contract.md`.
+- **Rahil**: when policy v1 changes `derive`, run `python scripts/gen_fixtures.py` and commit the fixtures;
+  `tests/api/test_contracts.py::test_report_fixture_is_what_derive_produces` fails until you do.
 
 ## 9. Progress log (append newest at the bottom)
 
@@ -154,3 +199,8 @@ keys, real partner calls with cache + fallback. Phase 3: `/v1/metrics` writes, b
   pushing `a/lane-a-basic-build`. **Next (after the user confirms): PDF 2 Phase 1 for Lane A**
   (roles enforcement, consistency block `confirmed_by`/`awaiting`/`stale_possible`,
   `GET /v1/reports/{id}/history`, kill -9 test, partner adapter interface + contract page).
+- 2026-10-12 — PRs #1 (Lane A), #2 (Miti), #3 (Rahil) merged into `main`; 135 tests green on merged `main`.
+  Started and finished Phase 1 on `a/phase1-roles-history`: roles + adapter interface, partner contract,
+  consistency block, history endpoint, kill -9 test. 156 tests green; real-process check passed.
+  **Next: open a PR for `a/phase1-roles-history` (label `contract`), then Phase 2** (resolve/review,
+  Ed25519 signing, idempotency keys), which depends on Rahil's policy v1 receipts landing in `main`.

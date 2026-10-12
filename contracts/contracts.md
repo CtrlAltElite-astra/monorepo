@@ -48,6 +48,7 @@ Client header: `X-API-Key: dev-officer`. Internal calls: `X-Region`, `X-Peer-Tok
 | `POST /v1/reports/{id}/notes` | `{text}` | `201 {report, event_id, consistency}` |
 | `GET /v1/reports` | `?limit=&cursor=` | JSON **array** of report views, newest first, incomplete hidden |
 | `GET /v1/reports/{id}` | | report view |
+| `GET /v1/reports/{id}/history` | | JSON **array** of every event of the report (any origin) in `(hlc, origin, seq)` order, exactly as stored; 404 unknown report. Works for a report still waiting for its CREATE |
 | `GET /v1/status` | | status view |
 | `GET /v1/health` | | `{region, ok: true}` |
 | `GET /internal/v1/sync/summary` | | `{region, heads, max_seen, event_count}`; 401 unknown peer; 503 when link down |
@@ -55,8 +56,22 @@ Client header: `X-API-Key: dev-officer`. Internal calls: `X-Region`, `X-Peer-Tok
 | `GET /admin/links`, `GET/POST /admin/links/{peer}` | `{mode: up\|down}` | link table; needs `ENABLE_ADMIN=1` and a valid API key |
 
 Reserved for PDF 2 (do not reuse): `POST /v1/reports/{id}/resolve`, `GET /v1/review`,
-`GET /v1/reports/{id}/history`, `POST /internal/v1/sync/push`, `GET /v1/metrics`,
-`POST /admin/config`, `POST /admin/burst`.
+`POST /internal/v1/sync/push`, `GET /v1/metrics`, `POST /admin/config`, `POST /admin/burst`.
+
+### 3.1 Roles (who may write)
+
+The role comes from the API key table (`API_KEYS=key:actor:role,...`); the actor is always the
+key's actor, never a request field. `401` = no key or a key this region does not know;
+`403` = a known key whose role may not do this (checked before the body is validated; nothing is stored).
+
+| role | create / set / note | resolve (PDF 2) | `/admin/*` |
+|---|---|---|---|
+| `officer` | yes | no (403) | no |
+| `supervisor` | yes | yes | no |
+| `admin` | no (403) | no | yes (when `ENABLE_ADMIN=1`) |
+
+Reads (`GET /v1/...`) need no key. The table lives in `region/trust/roles.py`; an unknown role is
+denied everything. Partner credentials (Phase 2) map onto the same roles. See `partner-contract.md`.
 
 ## 4. Responses the dashboard depends on
 
@@ -64,6 +79,18 @@ See `fixtures/report.json` and `fixtures/status.json` (generated from the real e
 `python scripts/gen_fixtures.py`). Report `consistency.replication`: `LOCAL_ONLY` | `PARTIAL` | `REPLICATED`.
 Additions beyond PDF 1 (all additive): status carries `event_digest`, `state_hash`,
 `quarantined`, `incomplete_reports`; peers carry `fails`.
+
+### 4.0 Report `consistency` block
+
+```json
+"consistency": {"replication": "PARTIAL", "confirmed_by": ["pun"], "awaiting": ["del"], "stale_possible": true}
+```
+
+- `confirmed_by`: peers whose last summary shows they hold every event of this report. `awaiting`: the other
+  configured peers. Both are sorted by region id.
+- `replication`: `LOCAL_ONLY` (no peer confirmed, or no peers), `PARTIAL` (some), `REPLICATED` (all).
+- `stale_possible`: any configured peer is unreachable right now, so a newer edit may exist that this
+  region cannot see. Shown even for a report every reachable peer has confirmed.
 
 ### 4.1 Status `level` (degradation ladder)
 
