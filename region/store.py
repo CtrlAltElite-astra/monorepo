@@ -16,7 +16,24 @@ from region.engine import canonical, derive as derive_mod, hlc
 
 _lock = threading.RLock()
 _conn: sqlite3.Connection | None = None
-MIGRATION = Path(__file__).parent / "migrations" / "001_init.sql"
+MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+MIGRATION = MIGRATIONS_DIR / "001_init.sql"  # idempotent; also sets the per-connection PRAGMAs
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """001 is idempotent and runs every start (it carries the PRAGMAs). Every later file runs
+    exactly once, inside one transaction together with its schema_migrations row, so a crash
+    can never leave a half-applied ALTER TABLE behind."""
+    conn.executescript(MIGRATION.read_text(encoding="utf-8"))
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at REAL NOT NULL)")
+    done = {r[0] for r in conn.execute("SELECT name FROM schema_migrations")}
+    for path in sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql")):
+        if path == MIGRATION or path.name in done:
+            continue
+        conn.executescript(
+            "BEGIN IMMEDIATE;\n" + path.read_text(encoding="utf-8")
+            + f"\nINSERT INTO schema_migrations (name, applied_at) VALUES ('{path.name}', strftime('%s','now'));\nCOMMIT;"
+        )
 
 
 def init(db_path: str | None = None) -> None:
@@ -28,7 +45,7 @@ def init(db_path: str | None = None) -> None:
         _conn.close()
     _conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
     _conn.row_factory = sqlite3.Row
-    _conn.executescript(MIGRATION.read_text(encoding="utf-8"))
+    _migrate(_conn)
     _conn.execute("INSERT OR IGNORE INTO node_meta (k, v) VALUES ('region', ?)", (config.settings.region,))
     stored = _conn.execute("SELECT v FROM node_meta WHERE k='region'").fetchone()[0]
     if stored != config.settings.region:
@@ -106,11 +123,12 @@ def _row_params(ev: dict):
     return (
         ev["event_id"], ev["origin"], ev["seq"], ev["report_id"], ev["type"], ev.get("field"),
         ev.get("priority", 1), ev["hlc"][0], ev["hlc"][1], ev["hash"], canonical.dumps(ev), time.time(),
+        ev.get("op_id"),
     )
 
 
 _INSERT = ("INSERT INTO events (event_id, origin, seq, report_id, type, field, priority, hlc_l, hlc_c, "
-           "hash, body, received_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+           "hash, body, received_at, op_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
 
 
 def insert_event(conn, ev: dict) -> None:
@@ -130,6 +148,32 @@ def insert_event_if_absent(conn, ev: dict) -> str:
 def events_for(conn, report_id: str) -> list:
     rows = conn.execute("SELECT body FROM events WHERE report_id=?", (report_id,)).fetchall()
     return [json.loads(r[0]) for r in rows]
+
+
+def event_by_op(conn, op_id: str):
+    """The first event (lowest HLC order) that carries this client op_id, or None.
+
+    It may have been written here, or have arrived by replication or carry."""
+    rows = conn.execute("SELECT body FROM events WHERE op_id=? ORDER BY hlc_l, hlc_c, origin, seq LIMIT 1", (op_id,)).fetchall()
+    return json.loads(rows[0][0]) if rows else None
+
+
+def mark_carried(conn, event_ids) -> None:
+    """Remember that these events reached this node through POST /v1/carry (history shows it)."""
+    now = time.time()
+    conn.executemany("INSERT OR IGNORE INTO carried_events (event_id, at) VALUES (?, ?)", [(i, now) for i in event_ids])
+
+
+def carried_ids(conn, event_ids) -> set:
+    ids = list(event_ids)
+    if not ids:
+        return set()
+    marks = ",".join("?" for _ in ids)
+    return {r[0] for r in conn.execute(f"SELECT event_id FROM carried_events WHERE event_id IN ({marks})", ids)}
+
+
+def carried_count(conn) -> int:
+    return conn.execute("SELECT COUNT(*) FROM carried_events").fetchone()[0]
 
 
 def events_after(conn, origin: str, after: int, limit: int) -> list:
