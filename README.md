@@ -134,7 +134,8 @@ per node: sequence numbers are guarded by an in-process lock.
 <!-- BEGIN:api owner=A -->
 ## API
 
-Header `X-API-Key: dev-officer`. Full contract: [contracts/contracts.md](contracts/contracts.md).
+Header `X-API-Key`. Dev keys: `dev-officer` (writes), `dev-supervisor` (also resolves conflicts), `dev-admin`
+(partition lab). Reads need no key. Full contract: [contracts/contracts.md](contracts/contracts.md).
 
 | method + path | purpose |
 |---|---|
@@ -142,7 +143,9 @@ Header `X-API-Key: dev-officer`. Full contract: [contracts/contracts.md](contrac
 | `PATCH /v1/reports/{id}` | set a field; `expected` ids give `409` if stale |
 | `POST /v1/reports/{id}/notes` | add a note (cart item) |
 | `GET /v1/reports[/{id}]` | view with `state`, `live`, `conflicts`, `consistency` |
-| `GET /v1/reports/{id}/history` | events of the report in order |
+| `GET /v1/reports/{id}/history` | events of the report in order, with `sig_status` and whether a browser carried it |
+| `GET /v1/review` | conflicts that need a decision, each with its receipt (candidates, rule, policy version) |
+| `POST /v1/reports/{id}/resolve` | supervisor only: `{field, value, candidates, reason}`; `403` for an officer, `409 stale_edit` / `no_conflict` |
 | `GET /v1/status` | level, heads, peers, digests, carry counters |
 | `GET /healthz` | liveness + level, no key |
 | `POST /v1/events/has` | `{ids}` -> `{missing}` |
@@ -152,7 +155,35 @@ Header `X-API-Key: dev-officer`. Full contract: [contracts/contracts.md](contrac
 
 Writes accept an optional `op_id` (or `Idempotency-Key` header): the same operation is applied once, and a replay returns 200 with `Idempotent-Replay: true`. 2xx bodies carry the full signed `event`.
 
-*(Akshit: add curl samples, and resolve and review when they land.)*
+### Try it (`python scripts/run_regions.py`, two nodes)
+
+```bash
+M=http://127.0.0.1:8001; P=http://127.0.0.1:8002; J='Content-Type: application/json'
+
+# create a cart: a client-chosen id plus an op_id means a retry can never double it
+curl -s -X POST $M/v1/reports -H 'X-API-Key: dev-officer' -H "$J"   -d '{"report_id":"R-0a1b2c3d","op_id":"create-1","title":"Alice","category":"cart","severity":1}'
+
+# add an item (a note); sending this exact request again returns 200 + Idempotent-Replay: true and writes nothing
+curl -s -X POST $M/v1/reports/R-0a1b2c3d/notes -H 'X-API-Key: dev-officer' -H "$J"   -d '{"op_id":"add-1","text":"{\"kind\":\"ADD\",\"sku\":\"SKU-1\",\"name\":\"Kolhapuri sandals\",\"qty\":1,\"price\":1299,\"user\":\"Alice\"}"}'
+
+curl -s $P/v1/reports/R-0a1b2c3d            # the same cart, read from the other node
+
+# cut the link both ways; Mumbai places the order, Pune adds an item; heal
+curl -s -X POST $M/admin/links/pun -H 'X-API-Key: dev-admin' -H "$J" -d '{"mode":"down"}'
+curl -s -X POST $P/admin/links/mum -H 'X-API-Key: dev-admin' -H "$J" -d '{"mode":"down"}'
+curl -s -X PATCH $M/v1/reports/R-0a1b2c3d -H 'X-API-Key: dev-officer' -H "$J"   -d '{"op_id":"close-1","field":"status","value":"closed","expected":["mum:1"]}'
+curl -s -X POST $P/v1/reports/R-0a1b2c3d/notes -H 'X-API-Key: dev-officer' -H "$J"   -d '{"op_id":"add-2","text":"{\"kind\":\"ADD\",\"sku\":\"SKU-2\",\"name\":\"Steel water bottle\",\"qty\":1,\"price\":499,\"user\":\"Alice\"}"}'
+curl -s -X POST $M/admin/links/pun -H 'X-API-Key: dev-admin' -H "$J" -d '{"mode":"up"}'
+curl -s -X POST $P/admin/links/mum -H 'X-API-Key: dev-admin' -H "$J" -d '{"mode":"up"}'
+
+curl -s $M/v1/review                        # one item: the order was placed while a new item arrived elsewhere
+
+# a supervisor decides; `candidates` is the cart's `live.status` list. An officer's key gets 403
+curl -s -X POST $M/v1/reports/R-0a1b2c3d/resolve -H 'X-API-Key: dev-supervisor' -H "$J"   -d '{"field":"status","value":"closed","candidates":["<ids from live.status>"],"reason":"ship with the new item"}'
+```
+
+Both nodes now show the same state and an empty review queue (`/v1/status` has the same `event_digest` on each).
+A forged event handed to `POST /v1/carry` comes back `{"result": "rejected", "reason": "unknown_origin" | "bad_hash" | "bad_sig"}`.
 <!-- END:api -->
 
 <!-- BEGIN:tests owner=B+D -->

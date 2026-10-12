@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useDemo } from '../state/demo'
 import type { Receipt, RegionId, ReportView, ReviewItem, Role } from '../api/types'
-import { FIELD_LABEL, FLAG_TEXT, RULE_TEXT, cartCode, describeValue } from '../domain/shop'
+import { FIELD_LABEL, FLAG_TEXT, RULE_TEXT, cartCode, describeInfo, describeValue, isCloseVsNew, isStatusValue } from '../domain/shop'
 import { fmtClock } from '../lib/util'
 import { Icon } from './icons'
 import { Chip, Empty, NODE_NAME, NodeDot, Segmented } from './ui'
@@ -27,9 +27,9 @@ export function useReviewEntries(): Entry[] {
 }
 
 export function ConflictCard({ receipt, compact }: { receipt: Receipt; compact?: boolean }) {
-  const closeVsNew = receipt.relationship === 'CLOSE_VS_NEW_INFO'
+  const closeVsNew = isCloseVsNew(receipt)
   const sides = closeVsNew
-    ? [{ title: 'Order placed', list: receipt.candidates.filter((c) => c.kind === 'close') }, { title: 'New item added elsewhere', list: receipt.candidates.filter((c) => c.kind !== 'close') }]
+    ? [{ title: 'Order placed', list: receipt.candidates.filter((c) => isStatusValue(c.value)) }, { title: 'New item added elsewhere', list: receipt.candidates.filter((c) => !isStatusValue(c.value)) }]
     : [{ title: 'Competing values', list: receipt.candidates }]
   return (
     <div className={`conflict ${compact ? 'conflict--compact' : ''}`}>
@@ -45,7 +45,7 @@ export function ConflictCard({ receipt, compact }: { receipt: Receipt; compact?:
             <h4>{s.title}</h4>
             {s.list.map((c) => (
               <div key={c.event_id} className="candidate">
-                <span className="candidate__val">{describeValue(c.field ?? receipt.field, c.value)}</span>
+                <span className="candidate__val">{closeVsNew && !isStatusValue(c.value) ? describeInfo(c.value) : describeValue(receipt.field, c.value)}</span>
                 <span className="candidate__meta"><NodeDot id={c.origin} size={8} />{NODE_NAME[c.origin] ?? c.origin} · {c.actor ?? '—'} · {fmtClock(c.wall)} · <code>{c.event_id}</code></span>
               </div>
             ))}
@@ -60,7 +60,7 @@ export function ConflictCard({ receipt, compact }: { receipt: Receipt; compact?:
 interface Choice { id: string; label: string; value: unknown; reason: string }
 
 function choicesFor(r: Receipt): Choice[] {
-  if (r.relationship === 'CLOSE_VS_NEW_INFO') {
+  if (isCloseVsNew(r)) {
     return [
       { id: 'ship', label: 'Ship with the new item', value: 'closed', reason: 'Ship with the new item' },
       { id: 'refund', label: 'Refund and re-order', value: 'cancelled', reason: 'Refund and re-order' },

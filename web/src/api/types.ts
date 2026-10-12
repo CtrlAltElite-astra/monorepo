@@ -46,9 +46,6 @@ export interface Candidate {
   origin: string
   actor: string | null
   wall: string | null
-  /** CLOSE_VS_NEW_INFO receipts only: which side this candidate is */
-  kind?: string
-  field?: string
 }
 
 export interface Receipt {

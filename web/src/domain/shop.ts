@@ -96,6 +96,18 @@ export const cartCode = (reportId: string) => 'C-' + reportId.replace(/^R-/, '')
 export const isDone = (status: string | null | undefined) => status === 'closed' || status === 'cancelled'
 
 /** Plain-words value of a candidate for the conflict panel. */
+/** A CLOSE_VS_NEW_INFO receipt (contract 3.4): rule and flag say so; `relationship` stays CONCURRENT. The close is listed first. */
+export const isCloseVsNew = (r: { rule: string | null; flags: string[] }): boolean => r.rule === 'CLOSE_VS_NEW_INFO' || r.flags.includes('CLOSE_VS_NEW_INFO')
+export const isStatusValue = (v: unknown): boolean => typeof v === 'string' && v in STATUS_LABEL
+
+/** What an unseen change in a CLOSE_VS_NEW_INFO receipt says: a note's text, or a severity value. */
+export function describeInfo(value: any): string {
+  const n = typeof value === 'string' ? parseNote(value) : null
+  if (n) return `added ${n.name}`
+  if (typeof value === 'number') return `delivery set to ${SPEEDS[value] ?? value}`
+  return String(value)
+}
+
 export function describeValue(field: string, value: any): string {
   if (value === null || value === undefined || value === '') return 'none'
   if (field === 'status') return statusLabel(value)

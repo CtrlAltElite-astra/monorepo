@@ -139,8 +139,10 @@ describe('CLOSE_VS_NEW_INFO (an addition is never buried under a close)', () => 
     const v = derive([CREATE, close, gift])
     expect(v.state.status).toBe('closed')
     expect(v.conflicts).toHaveLength(1)
-    expect(v.conflicts[0]).toMatchObject({ field: 'status', relationship: 'CLOSE_VS_NEW_INFO', needs_review: true, flags: ['CLOSE_VS_NEW_INFO'] })
-    expect(v.conflicts[0].candidates.map((c) => [c.event_id, c.kind])).toEqual([['mum:2', 'close'], ['pun:1', 'new_info']])
+    expect(v.conflicts[0]).toMatchObject({ field: 'status', relationship: 'CONCURRENT', rule: 'CLOSE_VS_NEW_INFO', needs_review: true, flags: ['CLOSE_VS_NEW_INFO'] })
+    // the engine's shape: the close first, then the change it did not see (its value is the note text)
+    expect(v.conflicts[0].candidates.map((c) => c.event_id)).toEqual(['mum:2', 'pun:1'])
+    expect(v.conflicts[0].candidates.map((c) => c.value)).toEqual(['closed', expect.stringContaining('Gift card')])
   })
 
   it('a note written after seeing the close, or already seen by the close, does not trigger it', () => {
@@ -152,7 +154,7 @@ describe('CLOSE_VS_NEW_INFO (an addition is never buried under a close)', () => 
 
   it('a severity of 4 or more counts as new information; a lower one does not', () => {
     const close = set('mum', 2, 'status', 'closed', ['mum:1'], { observed: ['mum:1'] })
-    expect(derive([CREATE, close, set('pun', 1, 'severity', 4, ['mum:1'], { observed: ['mum:1'] })]).conflicts.map((c) => c.relationship)).toEqual(['CLOSE_VS_NEW_INFO'])
+    expect(derive([CREATE, close, set('pun', 1, 'severity', 4, ['mum:1'], { observed: ['mum:1'] })]).conflicts.map((c) => c.rule)).toEqual(['CLOSE_VS_NEW_INFO'])
     expect(derive([CREATE, close, set('pun', 1, 'severity', 3, ['mum:1'], { observed: ['mum:1'] })]).conflicts).toEqual([])
   })
 

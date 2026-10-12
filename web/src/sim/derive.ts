@@ -71,8 +71,8 @@ function resolveField(field: Field, live: EventEnvelope[]): Choice {
   }
 }
 
-const candidate = (e: EventEnvelope, f: string, kind?: string): Candidate & { kind?: string; field?: string } => ({
-  event_id: e.event_id, value: valueOf(e, f), origin: e.origin, actor: e.actor, wall: e.wall, ...(kind ? { kind, field: f } : {}),
+const candidate = (e: EventEnvelope, f: string): Candidate => ({
+  event_id: e.event_id, value: valueOf(e, f), origin: e.origin, actor: e.actor, wall: e.wall,
 })
 
 export function derive(input: EventEnvelope[]): Derived {
@@ -139,9 +139,9 @@ export function derive(input: EventEnvelope[]): Derived {
   if (unseen.size) {
     const closing = closes.filter((c) => unseen.has(c.event_id))
     const news = onePerGroup([...new Map([...unseen.values()].flat().map((i) => [i.event_id, i])).values()].sort(order))
-    const extra = [...closing.map((c) => candidate(c, 'status', 'close')), ...news.map((i) => ({
+    // same shape as the real engine: the close first, then every change it did not see (a note's text or a severity)
+    const extra = [...closing.map((c) => candidate(c, 'status')), ...news.map((i) => ({
       event_id: i.event_id, value: i.type === 'NOTE' ? i.value?.text : i.value, origin: i.origin, actor: i.actor, wall: i.wall,
-      kind: 'new_info', field: i.type === 'NOTE' ? 'notes' : 'severity',
     }))]
     const existing = out.conflicts.find((c) => c.field === 'status')
     if (existing) {
@@ -150,7 +150,7 @@ export function derive(input: EventEnvelope[]): Derived {
       existing.candidates.push(...extra.filter((x) => !existing.candidates.some((c) => c.event_id === x.event_id)))
     } else {
       out.conflicts.push({
-        field: 'status', relationship: 'CLOSE_VS_NEW_INFO', candidates: extra, rule: 'CLOSE_VS_NEW_INFO',
+        field: 'status', relationship: 'CONCURRENT', candidates: extra, rule: 'CLOSE_VS_NEW_INFO',
         policy_version: POLICY_VERSION, provisional: out.state.status, needs_review: true, flags: ['CLOSE_VS_NEW_INFO'],
       })
     }

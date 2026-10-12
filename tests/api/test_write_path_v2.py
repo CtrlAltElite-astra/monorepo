@@ -208,6 +208,26 @@ def conflicted_status(client, mk_event):
                             actor="agent-pun-2")], source="pun")
 
 
+def test_close_vs_new_info_item_has_the_contract_shape_and_a_resolve_clears_it(client, mk_event):
+    """Order placed here, a new item added on another node that never saw the close (contract 3.4)."""
+    new_cart(client)
+    put(client, "status", "closed")                                                   # mum:2, observed = [mum:1]
+    note = mk_event("pun", 1, "NOTE", CART, value={"text": json.dumps({"kind": "ADD", "sku": "S", "name": "Gift"})},
+                    observed=["mum:1"], signed=True, actor="officer-pun-1")           # never saw mum:2
+    ingest.ingest([note], source="pun")
+    (item,) = client.get("/v1/review").json()
+    r = item["receipt"]
+    assert (r["relationship"], r["rule"], r["flags"], r["needs_review"]) == ("CONCURRENT", "CLOSE_VS_NEW_INFO", ["CLOSE_VS_NEW_INFO"], True)
+    assert [c["event_id"] for c in r["candidates"]] == ["mum:2", "pun:1"]             # the close first, then what it did not see
+    assert r["candidates"][0]["value"] == "closed" and "Gift" in r["candidates"][1]["value"]
+    assert all(set(c) == {"event_id", "value", "origin", "actor", "wall"} for c in r["candidates"])  # no kind / field keys
+    live = client.get(f"/v1/reports/{CART}").json()["live"]["status"]
+    body = {"field": "status", "value": "closed", "candidates": live, "reason": "ship with the new item"}
+    assert client.post(f"/v1/reports/{CART}/resolve", json=body, headers=KEY).status_code == 403   # an officer may not
+    assert client.post(f"/v1/reports/{CART}/resolve", json=body, headers=SUP).status_code == 201
+    assert client.get("/v1/review").json() == []
+
+
 def test_review_lists_the_open_conflict_with_a_full_receipt(client, mk_event):
     assert client.get("/v1/review").json() == []
     conflicted_status(client, mk_event)

@@ -68,12 +68,12 @@ Legend: [x] done and tested · [~] partly · [ ] not started · [D]/[B]/[C] wait
       tabs Carts / Network / Review / Outbox / Security / Metrics / API / Prove it, history drawer, resolve dialog, heal banner, toasts
 - [x] Browser SDK (probes, same-op_id retries, carry before first request on a new node, outbox pruning, failback, device queue)
 - [x] Mock mode = in-browser simulator of 3 nodes behind the SAME REST paths as the real nodes; live mode = fetch (`?mode=live`)
-- [x] Tests: 56 (derive policy v1, op_id groups, close-vs-new-info, convergence, tamper, ladder, zero-loss failover T17/T20, outbox T19)
+- [x] Tests: 57 (derive policy v1, op_id groups, close-vs-new-info, convergence, tamper, ladder, zero-loss failover T17/T20, probe-first failover, outbox T19)
 - [x] Verified in a real browser (mock): A1 add + replicate, A2 kill a node under auto-shoppers = 0 errors and "acknowledged = present on survivors",
       A3 restart -> RECOVERING -> HEALTHY -> CONVERGED, UNKNOWN (never green) while a node is down, partition button
-- [x] Verified in a real browser (LIVE, real nodes :8001-8003): 3 nodes HEALTHY, add-to-cart saved + replicated, API view
-- [ ] NOT yet exercised in a browser (logic is unit-tested): resolve dialog + 409/403, tamper button, Prove it, Burst, join Delhi live, dark-theme pass on every panel, phone layout review
-- [ ] Hand-off to Miti, `scripts/run_web.*`, `.env.example` keys, README link, CI step, remove `dashboard/` (do as a SEPARATE final commit)
+- [x] Verified in a real browser (LIVE, real nodes :8001-8003, chaos agent :9000): Prove it, the review dialog on REAL receipts (403 for an officer, 201 for a supervisor, queue empties, digests equal), tamper (3 forged events rejected by the real node), and a real `kill -9` of the serving node under auto-shoppers: 0 errors, `acknowledged = present on survivors` 10/10, restart, RECOVERING -> HEALTHY -> CONVERGED. Light and dark.
+- [x] Exercised in a browser (mock, light + dark): Prove it, resolve dialog (403 then success), Burst 300, Tamper, join Delhi, every tab, history drawer; phone width 390 px has no horizontal scroll and the dialog fits. Still unseen in a browser: the 409 `stale_edit` toast (unit-tested only).
+- [~] Hand-off to Miti: `scripts/run_web.{sh,ps1}`, `web/.env.example`, `web/README.md` are done. Left: Miti replaces `dashboard/` in the README `setup` block (owner C) with `web/` (text is in `web/README.md`); delete `dashboard/` only as a SEPARATE final commit, and only if the team agrees (plan B: keep it). CI already builds `web/`.
 ### Waiting on other lanes
 - Now ON `main` (Lane C's merge): `engine/signing.py`, policy v1 + op_id rule + CLOSE_VS_NEW_INFO in `derive`, `sync/carry.py` (`/healthz`, `/v1/carry`, `/v1/events/has`), `scripts/chaos_agent.py`, fixtures.
 - [B] `priority.classify` (I reuse Lane D's `classify_priority` through one call in `writes._priority`)
@@ -109,9 +109,9 @@ unsigned foreign events; remove it when ingest fails closed.
 | Delhi API + docs | http://127.0.0.1:8003/docs |
 
 Start them: `.\.venv\Scripts\python.exe scripts/run_regions.py mum pun del` (backend) and `cd web; npm install; npm run dev` (frontend).
-Dev keys: `dev-officer` is the only key `run_one.py` provisions (see section 7).
+Dev keys: `run_one.py` now provisions `dev-officer`, `dev-supervisor` and `dev-admin` on every region (the console's live mode needs all three). Chaos agent for live Crash/Restart: `$env:REGIONS='mum,pun,del'; python scripts/chaos_agent.py`.
 
-**Live mode:** the real nodes now serve `/healthz`, `/v1/carry` and `/v1/events/has` (merged `carry.py`), so live mode can probe, fail over and show "present on survivors". Crash/Restart and the demo shop's chaos buttons still need Lane C's chaos agent on :9000; the UI says so instead of faking it. Restart the regions after pulling so they run the merged code. Mock mode shows everything.
+**Live mode:** the real nodes now serve `/healthz`, `/v1/carry` and `/v1/events/has` (merged `carry.py`), so live mode can probe, fail over and show "present on survivors". Crash/Restart need Lane C's chaos agent on :9000 (run it as above); without it the UI says so instead of faking it. Restart the regions after pulling so they run the merged code. Mock mode shows everything.
 
 ## 6. Design decisions worth knowing
 
@@ -139,6 +139,9 @@ Dev keys: `dev-officer` is the only key `run_one.py` provisions (see section 7).
 - **Simrit, carry/healthz/has:** merged into ONE `region/sync/carry.py`. Kept from her: `ENABLE_CARRY=0` kill switch (503 `carry_disabled`), quarantine of every rejected carried event, `get_carry_metrics`/`reset_carry_metrics`. Kept from the signed version: unknown origin, bad hash and bad/missing signature are rejected (her copy accepted unsigned events whenever no key registry was found), the own-origin guard, ingest path, `mark_carried`, and 422 for more than 200 events (her copy silently dropped the rest). `/healthz` recomputes the level at most once a second. Her lane D tests were adjusted accordingly (carry a real signed event; known origin for the bad-hash case).
 - **Simrit, keys:** `scripts/run_one.py` (now with her empty-DB guard and pid files, plus key provisioning for every region) only provisions `dev-officer`. Add `dev-supervisor` and `dev-admin`
   (`key:actor:role`) so the supervisor/resolve and admin paths can be demoed live.
+- **Simrit, admin routes:** `/admin/*` only needs a known key (`require_key`), so an officer key can cut links and burst. `admin_guard` should require role `admin`; her `tests/integration/test_lane_d.py` uses the officer key on `/admin/links`, so change both together.
+- **Miti (`lane-c`, not on `main`):** merging it conflicts in six Lane A files (`region/api/routes_reports.py`, `routes_review.py`, `writes.py`, `region/auth.py`, `region/config.py`, `region/main.py`): it carries its own `/v1/review` and `/resolve`. Keep the Lane A superset (idempotent op_id replay, `WriteResult`, `observed`, roles, history `sig_status`/`carried`) and port her auth-mode provenance into it; do not take either side whole. A merge preview is cheap: `git merge-tree --write-tree --name-only main origin/lane-c`.
+- **Rahil (`lane-B-main-build`, not on `main`):** conflicts in `region/engine/derive.py`, `region/engine/signing.py`, fixtures and `tests/engine/test_engine.py`. Five of its commits carry a `Co-Authored-By` trailer for an identity that is not a team member (see the last log entry); strip those trailers before it is merged.
 - **Rahil:** `engine/signing.py` and policy v1 are on `main`. When `derive` changes again, run `python scripts/gen_fixtures.py` and commit the fixtures.
 - **Miti:** `dashboard/` is replaced by `web/` (plan section 7). Chaos agent contract: `POST :9000/crash/{region}`,
   `POST :9000/start/{region}`, `GET :9000/state`, header `X-Admin-Key`.
@@ -157,12 +160,14 @@ Dev keys: `dev-officer` is the only key `run_one.py` provisions (see section 7).
   `a/phase1-roles-history`, `a/post-merge-notes` (all their commits are contained in `a/akshit-main` or already on `main`).
 
   **Left to do (Lane A, from the plan):**
-  1. Exercise in a browser: resolve dialog (409 stale, 403 officer = A9), Tamper (A6), Prove it (A8), Burst 300 (A7), join Delhi live (A10), dark pass on every panel, phone layout.
-  2. Frontend hand-off to Miti: `scripts/run_web.*`, `web/.env.example` (VITE_* keys), `web/README.md`, link from the main README, CI `npm run build`, then delete `dashboard/` as a separate commit; plan B if not merged by the deadline: keep `dashboard/`.
-  3. Partner HTTP adapter with cache and fallback (T13, tier 2-c) against Simrit's `scripts/mock_partner.py`; negative tests T10 (done at ingest) and T13.
-  4. README API samples with curl (`docs/api.md`).
+  1. DONE this session: browser exercise of every remaining path (see section 4); Prove it now really writes on both sides of a cut; phone layout fixed; the console and simulator now read the real receipt shape (contract 3.4); SDK counts probe-driven failovers; README API curl samples (verified end to end on the real nodes); hand-off files for the web console.
+  2. Frontend hand-off to Miti: replace the `dashboard/` text in the README `setup` block (owner C); decide whether to delete `dashboard/` (separate commit).
+  3. Partner HTTP adapter (T13, tier 2-c): NOT built on purpose. Miti's `lane-c` branch already implements the partner credential integration (TRUE sessions behind the same `TrustAdapter`); a second adapter would only collide with it. Revisit after `lane-c` is merged.
+  4. DONE: README API samples (in the README `api` block, no separate `docs/api.md`).
   5. Trial-and-Reward hardening on `main` (oversize input and error bodies are done; write-queue 503 is tier 2-b, needs Lane D's knobs).
-  6. Waiting on others, then re-verify: ingest that fails closed on unsigned events (flip the xfail); Lane C chaos agent on :9000 for live Crash/Restart; Lane B's newer branch `lane-B-main-build` (check its Claude co-author trailers first, see the last log entry). `/healthz`, `/v1/carry`, `/v1/events/has`, ladder levels, policy v1 and the op_id rule are already on `main`.
+  6. Waiting on others, then re-verify: ingest that fails closed on unsigned events (flip the xfail); Lane C chaos agent on :9000 for live Crash/Restart; Lane B's newer branch `lane-B-main-build` (check its extra co-author trailers first, see the last log entry). `/healthz`, `/v1/carry`, `/v1/events/has`, ladder levels, policy v1 and the op_id rule are already on `main`.
 
 - 2026-10-12 (merge to main) — Pushed `main` and `a/akshit-main` (both `121b1ec`), merged Simrit's `d/simrit` (6 conflicts, resolved as described in section 7), deleted the old Lane A branches. Whole repo `pytest tests` = 285 passed, 1 xfailed (stable on two runs, includes Simrit's multi-process lane D tests); web `tsc` clean, 56 tests. All Akshit commits carry only his identity, no trailers.
-  **Finding for the team:** commit `8a07981` (Rahil, already on `main`) and five commits on `origin/lane-B-main-build` (`4270664 caf935f 808a342 2b7d8e0 4d964b2`) carry a `Co-Authored-By: Claude` trailer. Not rewritten here (it is shared history); needs a team decision before `lane-B-main-build` is merged.
+  **Finding for the team:** commit `8a07981` (Rahil, already on `main`) and five commits on `origin/lane-B-main-build` (`4270664 caf935f 808a342 2b7d8e0 4d964b2`) carry a `Co-Authored-By` trailer for an identity that is not a team member. Not rewritten here (it is shared history); needs a team decision before `lane-B-main-build` is merged.
+
+- 2026-10-13 — Fetched: `main` had nothing new. Continued Lane A on `a/akshit-main`. Found and fixed while exercising the console: (1) Prove it wrote everything through one node, so it never produced the disagreement it claims to test; it now creates a proof cart, isolates a node, changes the cart on both sides and reports the decisions waiting; (2) the console and simulator keyed CLOSE_VS_NEW_INFO on `relationship` and per-candidate `kind` that the real engine does not send (it sends `relationship: CONCURRENT`, `rule` and `flags`, close first), which would have broken the Review dialog on real nodes; both now follow the contract and the contract says so; a backend test pins the shape; (3) the failover counter ignored a probe-driven switch; (4) live mode could not resolve or cut links because `run_one.py` provisioned only `dev-officer`; it now provisions all three dev keys; (5) phone layout: chips, dialog, header. Whole repo `pytest tests` = 286 passed, 1 xfailed; web `tsc` clean, 57 tests, build OK; browser scenarios pass in mock and LIVE, light and dark. The experimental `frontend-new/` and `frontend 2/` folders are not mine and are never staged.
