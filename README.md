@@ -82,53 +82,66 @@ Full contract: [contracts/contracts.md](contracts/contracts.md#6-v11-additions-i
 <!-- END:policy -->
 
 <!-- BEGIN:demo owner=C -->
-## What it looks like (real nodes, nothing mocked)
+## The demo (real nodes, nothing mocked)
 
-| | |
-|---|---|
-| ![shop console with a conflicted cart on three nodes](docs/screenshots/shop_conflict.png) | **Shop and failover console.** Three nodes hold the same cart. A close raced with a new item and a team assignment; the policy kept severity 5 and Bhiwandi and flagged both for review. |
-| ![crash after the link was cut](docs/screenshots/carry_after_crash.png) | **Zero-loss failover.** The link was cut, three writes existed only on Mumbai, Mumbai was killed. The browser carried those 3 events to Pune: 0 errors, 0 lost. |
-| ![three nodes, cascade crash](docs/screenshots/three_nodes_cascade.png) | **Cascade.** Delhi joined empty and converged; then Mumbai and Pune were crashed in turn and Delhi kept serving. |
-| ![prove it](docs/screenshots/prove_it.png) | **Prove it.** Random cuts and concurrent writes, then identical digests and state on every node, and no acknowledged write missing. |
-| ![tamper](docs/screenshots/tamper.png) | **Tamper.** An edited, forged and id-reusing event are each quarantined and the node's state hash does not change. |
-| ![operator view](docs/screenshots/operator_conflicts.png) | **Operator view.** Per-node reports, conflict receipts with rule and candidates, and the history drawer. |
+The demo frontend is **`frontend-new/`**: a landing page and a live console.
 
-Three-minute walkthrough (Appendix A of the plan): add items (auto-shoppers) -> hold **Crash** on a node -> **Restart** ->
-**Cut**, edit on both sides, **Heal** (conflict chips) -> **Run the proof**.
+- **Left, the shop.** One scrolling column: five shoppers, six products, the cart. Every tap is a real signed write.
+  Items can be added and removed (a removal is a new event with quantity -1; nothing is deleted). Delivery speed,
+  fulfilment centre, check out, pay, place order, cancel, and the cart history. After an order is placed or cancelled
+  the next item starts a new cart.
+- **Right, the live backend.** Three region cards (Mumbai, Pune, Delhi), each with a status light, its event count,
+  carts, events at risk, and its own copy of the selected shopper's cart. Evidence tiles (acknowledged, recovered,
+  not on survivors), the latest action as three steps (saved, signed, peers confirmed), an event trail, and replication links.
+- **Break it.** Pause replication, then hold **Hold to crash** on a region card: the process is really killed. The card
+  shakes and its light turns red (solid for two seconds, then blinking). **Restart** brings it back: amber while it
+  catches up, then green.
+- **Failover.** The browser sends writes to the first region that answers, in a fixed order: Mumbai, Pune, Delhi. When
+  a region dies the browser first hands the survivor the signed events it still holds, so no acknowledged write is lost.
+  A region that comes back must answer three checks in a row before it serves again.
+- **Inspect.** Carts per region, Network (up / slow / cut, burst, tamper), Review (a supervisor resolves a conflict),
+  Outbox, Security, Metrics, API, and **Prove it** (cut a region off, change the same cart on both sides, heal, compare digests).
+- **Motion** switch in the navigation turns animation on or off. A `?mode=mock` simulator runs the same UI with no backend.
+
+Three-minute walkthrough: add items -> pause replication -> add one more -> hold **Hold to crash** on the serving region ->
+watch the browser move to the next region with 0 errors -> **Restart** -> resume replication -> **Prove it**.
+
+`web/` is the earlier console with the same SDK (port 5173) and `dashboard/` is the first dashboard, which also has the
+opt-in wallet sign-in. Screenshots of the current UI are still to be added (see [later.md](later.md)).
 <!-- END:demo -->
 
 <!-- BEGIN:setup owner=C -->
-## Stack and one-command setup
+## Stack and setup
 
-Python 3.11+, FastAPI, SQLite (WAL, one file per node), httpx, React + Vite. Needs Node 18+.
+Python 3.11+, FastAPI, SQLite (WAL, one file per node), httpx, React + Vite + TypeScript. Needs Node 18+.
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate            # Windows   (Linux/macOS: source .venv/bin/activate)
-pip install -r requirements.txt
+pip install -r requirements.txt   # add -r requirements-auth.txt for the optional sign-in mode and its tests
 
-python scripts/run_regions.py     # mum :8001, pun :8002, data in data/*.db; signing keys are created in keys/
-python scripts/chaos_agent.py     # :9000, lets the UI crash/start nodes (dev only)
-# three nodes: set REGIONS=mum,pun,del for run_one.py / chaos_agent.py and VITE_REGIONS in dashboard/.env
+# 1. the crash controller; it also starts the regions
+set REGIONS=mum,pun,del           # PowerShell: $env:REGIONS='mum,pun,del'   bash: export REGIONS=mum,pun,del
+python scripts/chaos_agent.py     # :9000 (dev only)
+# then start each region once:   curl -X POST -H "X-Admin-Key: dev-admin" http://127.0.0.1:9000/start/mum   (pun, del)
+# or, without crash controls:    python scripts/run_regions.py mum pun del
 
-cd dashboard
-copy .env.example .env            # (cp on Linux/macOS)
+# 2. the demo frontend
+cd frontend-new
 npm install
-npm run dev                       # http://localhost:5173
+npm run dev                       # http://localhost:5175  (console: /demo, simulator: /demo?mode=mock)
 ```
 
-UI without a backend: set `VITE_FIXTURES=1` in `dashboard/.env` (read-only, uses fixtures and mock data).
-
-| node | port | database |
+| what | port | notes |
 |---|---|---|
-| mum | 8001 | `data/mum.db` |
-| pun | 8002 | `data/pun.db` |
-| del | 8003 | `data/del.db` (joins in Phase 3) |
-| chaos agent | 9000 | `run/<region>.pid` |
-| dashboard | 5173 | n/a |
+| mum / pun / del | 8001 / 8002 / 8003 | `data/<region>.db`, signing keys in `keys/` (both git-ignored, created on first start) |
+| chaos agent | 9000 | kills and starts region processes for the UI; pid files in `run/` |
+| `frontend-new` | 5175 | proxies `/api/<region>` and `/chaos`; settings in `frontend-new/.env.example` |
+| `web` (earlier console) | 5173 | `bash scripts/run_web.sh` or `cd web; npm run dev` |
 
-All settings come from environment variables (see `.env.example`). Run **exactly one** Uvicorn worker
-per node: sequence numbers are guarded by an in-process lock.
+Dev keys on every region: `dev-officer`, `dev-supervisor`, `dev-admin`. All settings come from environment variables
+(see `.env.example`). Run **exactly one** Uvicorn worker per node: sequence numbers are guarded by an in-process lock.
+To reset the demo, stop the regions and delete `data/*.db*`.
 <!-- END:setup -->
 
 <!-- BEGIN:api owner=A -->
@@ -217,8 +230,15 @@ Lane B results on the merged `main` (Windows laptop, Python 3.14; numbers from t
 <!-- BEGIN:convergence owner=A+D -->
 ## Convergence integration (partner team)
 
-*(Akshit and Simrit: partner PS, contract, negative tests. Until a real partner exists, say
-"integration ready, partner service unavailable". Never present a mock as a real integration.)*
+Sign-in with the partner team's **TRUE credential** is built and is **off by default** (`AUTH_ENABLED=true` turns it on).
+A member proves eligibility with a credential, a region issues a short session that every region verifies locally with
+pinned keys, and roles are enforced on the server: officers touch only their own carts, only supervisors resolve
+conflicts. Killing a region does not log anyone out, and the issuer is never called on the write path. Revocation
+reaches every region through a signed status list; if the issuer is unreachable, regions use the last status they hold
+within strict time limits. Write-up with test evidence and limits: [docs/convergence-true.md](docs/convergence-true.md);
+the partner's code is under `collaboration/true`; a scripted run is `python scripts/demo_true.py`.
+
+The `frontend-new` console uses the API-key mode; the wallet sign-in screen is in `dashboard/`.
 <!-- END:convergence -->
 
 <!-- BEGIN:tr owner=D -->
@@ -233,16 +253,18 @@ Lane B results on the merged `main` (Windows laptop, Python 3.14; numbers from t
 | area | state |
 |---|---|
 | Independent nodes, local-first writes, pull + push replication, watermarks, partition and slow link, restart safety, roles, history, status digests | built, covered by the test suite |
+| op_id idempotency, Ed25519-signed events, `/v1/carry`, `/v1/events/has`, `/healthz`; ingest and carry reject unsigned or badly signed events | built, covered by tests and verified live |
+| Policy v1 and CLOSE_VS_NEW_INFO | built, covered by tests (`tests/engine`, `tests/shop`) |
+| Review queue and supervisor resolve (`/v1/review`, `/resolve`) | built, covered by tests and verified live |
 | Chaos agent (crash / start a node, inject a tampered event) | built, verified live |
-| Shop fixtures (carts, split-brain, close-vs-new-info, op_id retry) | built |
-| op_id idempotency, Ed25519-signed events, `/v1/carry`, `/v1/events/has`, `/healthz` | built, covered by tests and verified live (kill -9 after a cut link lost nothing) |
-| Policy v1 (highest speed, earliest centre + DOUBLE_DISPATCH, status ladder), CLOSE_VS_NEW_INFO | built, covered by tests (`tests/engine/test_policy_v1.py`, `tests/shop`) |
-| Review queue and supervisor resolve (`/v1/review`, `/resolve`) | not built yet |
-| Failover SDK + shop failover console (hold-to-crash, judge counters, timeline, outbox, network panel) | built; verified live against real nodes, including a hard crash after the link was cut (the browser carried 3 unreplicated events, 0 lost). Details: `docs/lane-c-progress.md` |
-| Prove-it (random cuts + concurrent writes + heal, then digests and completeness checked), Tamper (edit / forge / reuse, quarantined, state unchanged) | built, verified live against real nodes |
+| Zero-loss failover (T17) on real processes with `kill -9`; carry integrity (T18) | built, covered by tests |
+| Randomized convergence test (F1, Hypothesis) | built, see the numbers under *Tests* |
+| TRUE credential sign-in (optional auth mode) | built, off by default, tested on real processes |
+| Demo frontend `frontend-new` (shop, region cards, crash and restart, fixed failover order, inspector, Prove it) | built; a browser run against three isolated real backends passed every stage before the last UI changes (smaller type, remove from cart, new cart after an order), which were checked in the simulator only |
 | Failover latency (T20): crashed node p95 39 ms, hung node p95 631 ms | measured, see `docs/failover-latency.md` |
 | Delhi as a third node: joins empty and converges; cascade crash of two nodes loses nothing | verified live |
-| Randomized convergence test (F1, Hypothesis), metrics API, Burst, priority-queue evidence | not built yet |
+| Metrics API | not built; the Metrics tab shows what the status endpoint provides |
+| Screenshots of the current UI in this README | not done, see [later.md](later.md) |
 <!-- END:status -->
 
 <!-- BEGIN:limits owner=C -->
@@ -267,8 +289,8 @@ every PR was explained back by a teammate. Ideas (not code) came from the refere
 
 | lane | person | owns |
 |---|---|---|
-| A | Akshit Sharma | API, storage, security, contracts |
+| A | Akshit Sharma | API, storage, security, contracts, the `web` and `frontend-new` consoles |
 | B | Rahil | merge engine, signing, correctness tests |
-| C | Miti Shah | frontend, chaos agent, fixtures, documentation |
+| C | Miti Shah | first dashboard, chaos agent, fixtures, partner sign-in, documentation |
 | D | Simrit | replication, carry, runtime, Trial and Reward |
 <!-- END:credits -->

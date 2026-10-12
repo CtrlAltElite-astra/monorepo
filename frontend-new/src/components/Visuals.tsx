@@ -28,8 +28,8 @@ export function useScrollReveal(root: RefObject<HTMLElement | null>, deps: unkno
   useEffect(() => {
     const host = root.current
     if (!host) return
-    const io = new IntersectionObserver(entries => entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('is-in'); io.unobserve(e.target) } }), { root: host, threshold: 0.1 })
-    host.querySelectorAll('[data-reveal]:not(.is-in)').forEach(el => io.observe(el))
+    const io = new IntersectionObserver(entries => entries.forEach(e => { if (e.isIntersecting) { e.target.setAttribute('data-in', ''); io.unobserve(e.target) } }), { root: host, threshold: 0.1 })
+    host.querySelectorAll('[data-reveal]:not([data-in])').forEach(el => io.observe(el))
     return () => io.disconnect()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps)

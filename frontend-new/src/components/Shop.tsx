@@ -104,7 +104,7 @@ export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void;
               <h3>{p.name}</h3>
               <strong>{rupees(p.price)}</strong>
             </div>
-            <button className="sp-add" aria-label={`Add ${p.name}`} disabled={locked || busy} onClick={() => void add(p)}>
+            <button className="sp-add" aria-label={`Add ${p.name}`} disabled={busy} title={locked ? 'This order is finished. Adding an item starts a new cart.' : undefined} onClick={() => void add(p)}>
               <Icon name={d.pending[`add:${d.shopper}:${p.sku}`] ? 'refresh' : justAdded === p.sku ? 'check' : 'plus'} size={17} className={d.pending[`add:${d.shopper}:${p.sku}`] ? 'spin' : ''} />
               {justAdded === p.sku ? 'Added' : 'Add'}
             </button>
@@ -127,10 +127,13 @@ export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void;
                 <ProductPhoto sku={item.sku} className="sp-cart-thumb" />
                 <span>{item.name}<small>Quantity {item.qty}</small></span>
                 <strong>{rupees(item.price * item.qty)}</strong>
+                <button className="sp-remove" aria-label={`Remove one ${item.name}`} title="Remove one" disabled={locked || busy} onClick={() => void d.removeFromCart(d.shopper, item)}><Icon name="minus" size={16} /></button>
               </li>
             ))}
           </ul>
         ) : <p className="sp-empty">Your everyday starts here. Add your first item above.</p>}
+
+        {locked && <p className="sp-done"><Icon name="check" size={16} />{STATUS_LABEL[status]?.label}. Add an item above to start a new cart.</p>}
 
         {cart?.conflicts.some(c => c.needs_review) && (
           <button className="sp-review" onClick={onReview}><Icon name="scale" size={17} />This cart has updates to review<Icon name="arrow" size={17} /></button>

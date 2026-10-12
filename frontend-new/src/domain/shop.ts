@@ -84,7 +84,7 @@ export function cartItems(report: Pick<ReportView, 'state'>): CartItem[] {
     if (hit) { hit.qty += add.qty; hit.noteIds.push(note.id) }
     else bySku.set(add.sku, { sku: add.sku, name: add.name, qty: add.qty, price: add.price, user: add.user, noteIds: [note.id] })
   }
-  return [...bySku.values()]
+  return [...bySku.values()].filter((i) => i.qty > 0) // removals are notes with a negative quantity; nothing is ever deleted
 }
 
 export const cartTotal = (items: CartItem[]) => items.reduce((sum, i) => sum + i.qty * i.price, 0)

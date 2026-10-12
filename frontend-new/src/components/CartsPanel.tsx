@@ -11,7 +11,7 @@ function Row({ rep, onOpen }: { rep: ReportView; onOpen: () => void }) {
   const st = STATUS_LABEL[rep.state.status ?? 'open']
   return (
     <button className="cartrow" onClick={onOpen} title="Open this cart's history">
-      <span className="cartrow__main"><strong>{rep.state.title}</strong> <code className="muted">{cartCode(rep.report_id)}</code></span>
+      <span className="cartrow__main"><strong>{rep.state.title}</strong></span>
       <span className="cartrow__sub">{plural(cartCount(items), 'item')} · {rupees(cartTotal(items))} · {SPEEDS[rep.state.severity ?? 1]}{rep.state.assigned_team ? ` · ${rep.state.assigned_team}` : ''}</span>
       <span className="cartrow__chips">
         <Chip tone={st?.tone ?? 'muted'}>{st?.label ?? rep.state.status}</Chip>

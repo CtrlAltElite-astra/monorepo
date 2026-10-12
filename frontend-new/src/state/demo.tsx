@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { createApi, type Api } from '../api'
 import type { CarryResult, EventEnvelope, HttpResult, Level, Mode, RegionId, RegionInfo, ReportView, ReviewItem, Role, Status } from '../api/types'
 import { NetworkError } from '../api/types'
-import { addNoteText, PRODUCTS, SHOPPERS, type Product, type Shopper } from '../domain/shop'
+import { addNoteText, isDone, PRODUCTS, SHOPPERS, type Product, type Shopper } from '../domain/shop'
 import { canonical, newReportId, sleep, uuid } from '../lib/util'
 import { SyncShieldClient, type CarryNote, type SdkState } from '../sdk/syncshieldClient'
 import { eventHash } from '../sim/crypto'
@@ -55,6 +55,8 @@ interface Demo {
   proving: boolean
   /** true when the item was saved (or kept on the device); false when it was refused */
   addToCart(shopper: Shopper, product: Product): Promise<boolean>
+  /** take one unit of an item out of the cart (a new signed event with quantity -1; the history keeps both) */
+  removeFromCart(shopper: Shopper, item: { sku: string; name: string; price: number }): Promise<boolean>
   writeField(shopper: Shopper, field: string, value: unknown): Promise<HttpResult | null>
   resolve(report: ReportView, field: string, value: unknown, candidates: string[], reason: string, as: Role): Promise<HttpResult>
   setLink(a: RegionId, b: RegionId, mode: 'up' | 'down' | 'slow'): Promise<void>
@@ -261,8 +263,11 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
     const key = `add:${who}:${product.sku}`
     markPending(key, true)
     try {
-      let cart = cartFor(who)
-      let id = cart?.report_id ?? cartIds.current[who]
+      const cart = cartFor(who)
+      // an order that was placed or cancelled is finished: the next item starts a NEW cart (the old order stays in the history)
+      const finished = !!cart && isDone(cart.state.status)
+      if (finished) delete cartIds.current[who]
+      let id = finished ? undefined : cart?.report_id ?? cartIds.current[who]
       if (!id) {
         id = newReportId()
         cartIds.current[who] = id
@@ -271,6 +276,20 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
       }
       const res = remember(who, await sdk.call('POST', `/v1/reports/${id}/notes`, { text: addNoteText(product, who) }, { label: `${who}: add ${product.name}` }))
       const ok = handleResult(res, `Adding ${product.name}`)
+      await settle()
+      return ok
+    } finally { markPending(key, false) }
+  }, [cartFor, sdk]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const removeFromCart = useCallback(async (who: Shopper, item: { sku: string; name: string; price: number }) => {
+    const cart = cartFor(who)
+    if (!cart || isDone(cart.state.status)) return false
+    const key = `add:${who}:${item.sku}`
+    markPending(key, true)
+    try {
+      const text = addNoteText({ sku: item.sku, name: item.name, price: item.price } as Product, who, -1)
+      const res = remember(who, await sdk.call('POST', `/v1/reports/${cart.report_id}/notes`, { text }, { label: `${who}: remove ${item.name}` }))
+      const ok = handleResult(res, `Removing ${item.name}`)
       await settle()
       return ok
     } finally { markPending(key, false) }
@@ -435,7 +454,7 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
   const value: Demo = {
     api, mode: api.mode, regions, joined: joinedNow, sdk, sdkState, carryLog, snaps, review, last, presence, convergence, viewRegion, heals,
     chaosAvailable, chaosRunning, autoShoppers, setAutoShoppers, shopper, setShopper, cartFor, pending, saved, toasts, toast, dismissToast,
-    tamperRows, proveSteps, proveResult, proving, addToCart, writeField, resolve, setLink, crash, start, burst, tamper, proveIt, history, reset,
+    tamperRows, proveSteps, proveResult, proving, addToCart, removeFromCart, writeField, resolve, setLink, crash, start, burst, tamper, proveIt, history, reset,
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

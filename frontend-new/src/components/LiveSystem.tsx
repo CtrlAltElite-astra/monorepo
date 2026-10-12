@@ -121,8 +121,7 @@ export function RegionCards() {
                 <strong key={cart ? cartCount(localItems) : -1}>{!up ? 'Unknown' : cart ? `${cartCount(localItems)} items · ${rupees(cartTotal(localItems))}` : 'Not here yet'}</strong>
               </div>
 
-              <footer>
-                <span className="rc-digest" title={status?.state_hash ? `State digest ${status.state_hash}` : 'No digest: the region is not answering'}>State #{status?.state_hash?.slice(0, 7) || 'unknown'}</span>
+              <footer>
                 {up && phase !== 'starting'
                   ? <HoldButton label={`Hold to crash ${r.name}`} disabled={!d.chaosAvailable} onArm={k => setArm(a => ({ ...a, [r.id]: k }))} onConfirm={() => crash(r.id)} title={d.chaosAvailable ? 'Press and hold to kill this region’s process' : 'Crash controls need the local chaos agent'}><Icon name="power" size={17} />Hold to crash</HoldButton>
                   : <button className="btn btn--primary rc-restart" aria-label={`Restart ${r.name}`} disabled={!d.chaosAvailable || phase === 'starting'} onClick={() => start(r.id)}><Icon name="refresh" size={17} className={phase === 'starting' ? 'spin' : ''} />{phase === 'starting' ? 'Starting…' : 'Restart'}</button>}
