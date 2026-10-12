@@ -1,14 +1,14 @@
-"""derive() v0 (owner: Rahil). Pure function of a SET of events of one report.
+"""derive() v1.1 (owner: Rahil). Pure function of a SET of events of one report.
 
-Result depends only on the set, never on arrival order or duplicates.
-v0 rule: when live values disagree show the latest by (hlc, origin, seq)
-and flag a conflict. PDF 2 replaces the single rule with the per-field policy;
-the function shape stays the same.
+The result depends only on the set, never on arrival order or duplicates. For
+each field the writes that nobody replaced are live. If they disagree that is a
+conflict: policy.py picks the value shown meanwhile and derive() records a
+receipt with every candidate and the rule used. Copies of one client write
+(same op_id) count once.
 """
 from contracts.schemas import FIELDS
 from region.engine import canonical
-
-POLICY_VERSION = 0
+from region.engine.policy import POLICY_V1, POLICY_VERSION  # noqa: F401  (/v1/status reads POLICY_VERSION here)
 
 
 def order(e: dict):
@@ -19,6 +19,29 @@ def order(e: dict):
 def _fval(e: dict, f: str):
     """Value of field f in e: a CREATE carries all initial fields, a SET/RESOLVE one."""
     return e["value"][f] if e["type"] == "CREATE" else e["value"]
+
+
+def _int(x) -> bool:
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
+def well_formed(e) -> bool:
+    """True when e has the shape derive() relies on.
+
+    Anything else is ignored, the same way on every node, so one malformed event
+    can never make derive() raise and block the reports around it.
+    """
+    if not isinstance(e, dict) or "value" not in e:
+        return False
+    hlc, sup, kind, value = e.get("hlc"), e.get("supersedes"), e.get("type"), e["value"]
+    return (
+        isinstance(e.get("event_id"), str) and isinstance(e.get("origin"), str) and _int(e.get("seq"))
+        and isinstance(hlc, (list, tuple)) and len(hlc) == 2 and all(_int(x) for x in hlc)
+        and isinstance(sup, (list, tuple)) and all(isinstance(s, str) for s in sup)
+        and (kind != "CREATE" or isinstance(value, dict))
+        and (kind not in ("SET", "RESOLVE") or isinstance(e.get("field"), str))
+        and (kind != "NOTE" or (isinstance(value, dict) and isinstance(value.get("text"), str)))
+    )
 
 
 def op_groups(evs) -> dict:
@@ -52,43 +75,61 @@ def _first_copies(groups: dict, evs) -> list:
     return [e for e in evs if groups.get(e["event_id"], (e["event_id"],))[0] == e["event_id"]]
 
 
-def derive(events) -> dict:
+def _receipt(field: str, pairs: list, value, rule: str, review: bool, flags: list, version: int) -> dict:
+    """What a conflict looked like and how it was settled (plan 6.7).
+
+    values and event_ids repeat the candidates in the older v0 shape, which the contract keeps.
+    """
+    return {
+        "field": field,
+        "relationship": "CONCURRENT",
+        "candidates": [{"event_id": e["event_id"], "value": v, "origin": e["origin"],
+                        "actor": e.get("actor"), "wall": e.get("wall")} for e, v in pairs],
+        "rule": rule,
+        "policy_version": version,
+        "provisional": value,
+        "needs_review": review,
+        "flags": flags,
+        "values": [v for _, v in pairs],
+        "event_ids": [e["event_id"] for e, _ in pairs],
+    }
+
+
+def derive(events, policy=POLICY_V1) -> dict:
     """events: all events of ONE report, any order, duplicates allowed.
 
     Returns {"state": {field: value, ..., "notes": [{"id", "text"}]},
-             "live": {field: [event_id, ...]},  # values nobody superseded, in tie-break order
-             "conflicts": [{"field", "values", "event_ids", "rule", "needs_review"}],
+             "live": {field: [event_id, ...]},  # values nobody replaced, oldest first
+             "conflicts": [receipt, ...],       # at most one per field, in FIELDS order
              "incomplete": True until the CREATE has arrived,
-             "policy_version": POLICY_VERSION}
+             "policy_version": policy.version}
     """
-    evs = list({e["event_id"]: e for e in events}.values())
+    evs = list({e["event_id"]: e for e in events if well_formed(e)}.values())
     groups = op_groups(evs)
-    view = {
-        "state": {},
-        "live": {},
-        "conflicts": [],
-        "incomplete": not any(e["type"] == "CREATE" for e in evs),
-        "policy_version": POLICY_VERSION,
-    }
+    live = {}
     for f in FIELDS:
         cands = [
             e for e in evs
-            if (e["type"] == "CREATE" and isinstance(e["value"], dict) and f in e["value"])
-            or (e["type"] in ("SET", "RESOLVE") and e["field"] == f)
+            if (e["type"] == "CREATE" and f in e["value"]) or (e["type"] in ("SET", "RESOLVE") and e["field"] == f)
         ]
         gone = _with_copies(groups, {sid for e in cands for sid in e["supersedes"]})
-        live = _first_copies(groups, sorted((e for e in cands if e["event_id"] not in gone), key=order))
-        vals = [_fval(e, f) for e in live]
-        view["live"][f] = [e["event_id"] for e in live]
-        view["state"][f] = vals[-1] if vals else None
-        if len({canonical.dumps(v) for v in vals}) > 1:
-            view["conflicts"].append({
-                "field": f,
-                "values": vals,
-                "event_ids": view["live"][f],
-                "rule": "v0-latest",
-                "needs_review": True,
-            })
+        kept = _first_copies(groups, sorted((e for e in cands if e["event_id"] not in gone), key=order))
+        live[f] = [(e, _fval(e, f)) for e in kept]
+    view = {
+        "state": {},
+        "live": {f: [e["event_id"] for e, _ in live[f]] for f in FIELDS},
+        "conflicts": [],
+        "incomplete": not any(e["type"] == "CREATE" for e in evs),
+        "policy_version": policy.version,
+    }
+    for f in FIELDS:
+        values = [v for _, v in live[f]]
+        if len({canonical.dumps(v) for v in values}) > 1:
+            value, rule, review, flags = policy.resolve(f, live[f])
+            view["conflicts"].append(_receipt(f, live[f], value, rule, review, flags, policy.version))
+        else:
+            value = values[-1] if values else None  # one value, or several equal ones: not a conflict
+        view["state"][f] = value
     view["state"]["notes"] = [
         {"id": e["event_id"], "text": e["value"]["text"]}
         for e in _first_copies(groups, sorted(evs, key=order)) if e["type"] == "NOTE"

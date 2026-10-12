@@ -113,7 +113,7 @@ def test_concurrent_edit_is_a_conflict_and_deterministic():
     v = derive([CREATE, m, p])
     assert [c["field"] for c in v["conflicts"]] == ["severity"]
     assert sorted(v["conflicts"][0]["values"]) == [4, 5]
-    assert v["state"]["severity"] == 4  # latest by hlc in v0
+    assert v["state"]["severity"] == 5  # policy v1: the highest wins, although 4 was written later
 
 
 def test_disjoint_fields_do_not_conflict():
@@ -144,15 +144,15 @@ def test_write_that_saw_only_one_value_keeps_the_conflict():
     late = mk("mum", 3, "SET", "severity", 2, supersedes=["mum:2"], hlc_=(3000, 0))  # still cut off from pun
     v = derive([CREATE, m, p, late])
     assert v["live"]["severity"] == ["pun:1", "mum:3"]
-    assert v["conflicts"][0]["values"] == [4, 2] and v["state"]["severity"] == 2
+    assert v["conflicts"][0]["values"] == [4, 2] and v["state"]["severity"] == 4
 
 
 def test_equal_hlc_breaks_ties_by_origin_then_seq():
-    m = mk("mum", 2, "SET", "severity", 5, supersedes=["mum:1"], hlc_=(2000, 0))
-    p = mk("pun", 1, "SET", "severity", 4, supersedes=["mum:1"], hlc_=(2000, 0))
+    m = mk("mum", 2, "SET", "title", "from mum", supersedes=["mum:1"], hlc_=(2000, 0))
+    p = mk("pun", 1, "SET", "title", "from pun", supersedes=["mum:1"], hlc_=(2000, 0))
     for evs in ([CREATE, m, p], [p, m, CREATE]):
         v = derive(evs)
-        assert v["live"]["severity"] == ["mum:2", "pun:1"] and v["state"]["severity"] == 4
+        assert v["live"]["title"] == ["mum:2", "pun:1"] and v["state"]["title"] == "from pun"  # title: latest wins
 
 
 def test_equal_concurrent_values_are_not_a_conflict():
