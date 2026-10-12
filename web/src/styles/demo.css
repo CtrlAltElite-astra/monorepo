@@ -15,7 +15,7 @@
 .panel__head { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .panel__head h4 { display: flex; align-items: center; gap: 7px; }
 @media (max-width: 1180px) { .demo__main { grid-template-columns: 1fr; } }
-@media (max-width: 760px) { .judge__row { grid-template-columns: 1fr; } .topbar { padding: 10px 14px; } .demo__main { padding: 14px; } }
+@media (max-width: 760px) { .judge__row { grid-template-columns: 1fr; } .topbar { padding: 10px 14px; position: static; } .demo__main { padding: 14px; } }
 
 /* ---- heal banner ---- */
 .heal { display: flex; align-items: center; gap: 10px; margin: 12px 20px 0; padding: 10px 14px; border-radius: var(--r-sm); background: var(--ok-bg); color: var(--ok); font-size: .88rem; border: 1px solid color-mix(in srgb, var(--ok) 35%, transparent); animation: slide-up .35s var(--ease-spring); max-width: 1720px; }
@@ -125,7 +125,7 @@ button.cartrow:hover { transform: translateY(-1px); box-shadow: var(--shadow-sm)
 /* ---- conflicts and review ---- */
 .review { display: grid; gap: 14px; } .review__item { display: grid; gap: 10px; padding: 14px; border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); border-radius: var(--r); background: var(--surface-2); animation: slide-up .3s var(--ease); }
 .review__item > header { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; } .review__item .btn { justify-self: start; }
-.conflict { display: grid; gap: 10px; } .conflict__meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.conflict { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); } .conflict__meta { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .conflict__sides { display: grid; gap: 8px; } .conflict__sides.is-split { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 .conflict__side { display: grid; gap: 7px; align-content: start; } .conflict__side h4 { font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
 .candidate { padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); display: grid; gap: 2px; }

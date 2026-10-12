@@ -5,7 +5,7 @@ import { createApi, type Api } from '../api'
 import type { CarryResult, EventEnvelope, HttpResult, Level, Mode, RegionId, RegionInfo, ReportView, ReviewItem, Role, Status } from '../api/types'
 import { NetworkError } from '../api/types'
 import { addNoteText, PRODUCTS, SHOPPERS, type Product, type Shopper } from '../domain/shop'
-import { canonical, newReportId, sleep } from '../lib/util'
+import { canonical, newReportId, sleep, uuid } from '../lib/util'
 import { SyncShieldClient, type CarryNote, type SdkState } from '../sdk/syncshieldClient'
 import { eventHash } from '../sim/crypto'
 import { NODE_NAME } from '../components/ui'
@@ -17,7 +17,7 @@ export interface LastResponse { method: string; path: string; status: number; bo
 export interface Heal { region: RegionId; isolatedMs: number; eventsSynced: number; conflicts: number; reviews: number; at: number }
 export interface TamperRow { label: string; reason: string | undefined; result: CarryResult['result'] | 'error'; at: number }
 export interface ProveStep { text: string; state: 'todo' | 'run' | 'done' | 'fail' }
-export interface ProveResult { rows: { region: RegionId; event_digest: string; state_hash: string; policy_version: number; events: number }[]; verdict: Convergence; ms: number; cuts: string[]; writes: number }
+export interface ProveResult { rows: { region: RegionId; event_digest: string; state_hash: string; policy_version: number; events: number }[]; verdict: Convergence; ms: number; cuts: string[]; writes: number; reviews: number }
 
 const POLL_MS = 900
 const AUTO_MS = 1100
@@ -348,43 +348,61 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
   const proveIt = useCallback(async () => {
     if (proving) return
     setProving(true); setProveResult(null)
+    const alive = joinedNow.filter((r) => snapsRef.current[r]?.ok)
+    if (alive.length < 2) { toast('info', 'Prove it needs at least two running nodes.'); setProving(false); return }
     const pairs: [RegionId, RegionId][] = joinedNow.flatMap((a, i) => joinedNow.slice(i + 1).map((b) => [a, b] as [RegionId, RegionId]))
     const steps: ProveStep[] = [
-      { text: 'Cut random links', state: 'todo' }, { text: 'Keep shopping on both sides of the cut', state: 'todo' },
+      { text: 'Create a proof cart and wait until every node holds it', state: 'todo' },
+      { text: 'Cut one node off from all the others', state: 'todo' },
+      { text: 'Change the same cart on both sides: one side places the order, the other adds an item and sets a different delivery speed', state: 'todo' },
       { text: 'Heal every link', state: 'todo' }, { text: 'Wait for every node to agree', state: 'todo' }, { text: 'Compare digests and state hashes', state: 'todo' },
     ]
     const mark = (i: number, state: ProveStep['state']) => { steps[i] = { ...steps[i], state }; setProveSteps([...steps]) }
     const started = Date.now()
     const cuts: string[] = []
     let writes = 0
+    // These writes go straight to a chosen node (two devices on opposite sides of the cut). The SDK would send them all to ONE node.
+    const direct = async (region: RegionId, method: string, path: string, body: Record<string, unknown>) => {
+      const res = await api.transport.request(region, method, path, { body: { ...body, op_id: uuid() }, as: 'officer', timeoutMs: 3000 })
+      if (res.status >= 400) throw new Error(`${method} ${path} on ${region}: ${res.status}`)
+      writes++
+      return res
+    }
+    const live = (region: RegionId, id: string, field: string) => snapsRef.current[region]?.reports.find((r) => r.report_id === id)?.live[field] ?? []
     try {
       mark(0, 'run')
-      const pick = [...pairs].sort(() => Math.random() - 0.5).slice(0, Math.max(1, Math.min(2, pairs.length)))
-      for (const [a, b] of pick) { await setLink(a, b, 'down'); cuts.push(`${a}–${b}`) }
+      const [a, b] = [...alive].sort(() => Math.random() - 0.5)
+      const id = newReportId()
+      await direct(a, 'POST', '/v1/reports', { report_id: id, title: 'Proof cart', category: 'cart', severity: 1 })
+      await direct(a, 'POST', `/v1/reports/${id}/notes`, { text: addNoteText(PRODUCTS[0], 'Proof cart') })
+      for (let i = 0; i < 30 && !alive.every((r) => snapsRef.current[r]?.reports.some((x) => x.report_id === id)); i++) await sleep(300)
+      if (!alive.every((r) => snapsRef.current[r]?.reports.some((x) => x.report_id === id))) throw new Error('the proof cart did not reach every node')
       mark(0, 'done'); mark(1, 'run')
-      for (let i = 0; i < 8; i++) {
-        const who = SHOPPERS[Math.floor(Math.random() * SHOPPERS.length)]
-        await addToCart(who, PRODUCTS[Math.floor(Math.random() * PRODUCTS.length)]); writes++
-        if (i % 3 === 0) await writeField(who, 'severity', 1 + Math.floor(Math.random() * 5))
-        await sleep(120)
-      }
+      for (const other of joinedNow.filter((r) => r !== a)) { await setLink(a, other, 'down'); cuts.push(`${a}–${other}`) }
       mark(1, 'done'); mark(2, 'run')
-      for (const [a, b] of pairs) await setLink(a, b, 'up')
+      await sleep(400)
+      await direct(a, 'PATCH', `/v1/reports/${id}`, { field: 'severity', value: 5, expected: live(a, id, 'severity') })
+      await direct(a, 'PATCH', `/v1/reports/${id}`, { field: 'status', value: 'closed', expected: live(a, id, 'status') })
+      await direct(b, 'POST', `/v1/reports/${id}/notes`, { text: addNoteText(PRODUCTS[1], 'Proof cart') })
+      await direct(b, 'PATCH', `/v1/reports/${id}`, { field: 'severity', value: 2, expected: live(b, id, 'severity') })
       mark(2, 'done'); mark(3, 'run')
+      for (const [x, y] of pairs) await setLink(x, y, 'up')
+      mark(3, 'done'); mark(4, 'run')
       let verdict: Convergence = 'UNKNOWN'
       for (let i = 0; i < 40; i++) { await sleep(500); verdict = computeConvergence(snapsRef.current, joinedNow); if (verdict === 'CONVERGED') break }
-      mark(3, verdict === 'CONVERGED' ? 'done' : 'fail'); mark(4, 'run')
+      mark(4, verdict === 'CONVERGED' ? 'done' : 'fail'); mark(5, 'run')
       const rows = joinedNow.flatMap((r) => { const s = snapsRef.current[r]?.status; return s ? [{ region: r, event_digest: s.event_digest, state_hash: s.state_hash, policy_version: s.policy_version, events: s.event_count }] : [] })
-      setProveResult({ rows, verdict, ms: Date.now() - started, cuts, writes })
-      mark(4, verdict === 'CONVERGED' ? 'done' : 'fail')
-    } catch {
-      toast('bad', 'Prove it could not finish. Check the admin key and that every node is running.')
+      const reviews = (snapsRef.current[a]?.reports ?? []).filter((r) => r.conflicts.some((c) => c.needs_review)).length
+      setProveResult({ rows, verdict, ms: Date.now() - started, cuts, writes, reviews })
+      mark(5, verdict === 'CONVERGED' ? 'done' : 'fail')
+    } catch (e) {
+      toast('bad', `Prove it could not finish (${e instanceof Error ? e.message : 'error'}). Check the admin key and that every node is running.`)
       steps.forEach((s, i) => s.state === 'run' && mark(i, 'fail'))
     } finally {
-      for (const [a, b] of pairs) await setLink(a, b, 'up').catch(() => undefined)
+      for (const [x, y] of pairs) await setLink(x, y, 'up').catch(() => undefined)
       setProving(false)
     }
-  }, [addToCart, joinedNow, proving, setLink, toast, writeField])
+  }, [api, joinedNow, proving, setLink, toast])
 
   const reset = useCallback((n?: number) => {
     if (n && n !== nodes) setNodes(n)

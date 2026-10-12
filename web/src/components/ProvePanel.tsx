@@ -15,7 +15,7 @@ export function ProvePanel() {
   return (
     <div className="panel prove">
       <div className="prove__head">
-        <div><h4>Cut, write on both sides, heal, compare</h4><p className="muted small">Cuts random links, keeps shopping on both sides, heals everything, then compares what every node holds. Nothing here is a claim: the numbers come from each node's /v1/status.</p></div>
+        <div><h4>Cut, write on both sides, heal, compare</h4><p className="muted small">Cuts one node off, changes the same cart on both sides of the cut, heals everything, then compares what every node holds. Nothing here is a claim: the numbers come from each node's /v1/status.</p></div>
         <ProveButton />
       </div>
       {d.proveSteps.length > 0 && (
@@ -28,7 +28,7 @@ export function ProvePanel() {
       {r && (
         <div className={`verdict verdict--${r.verdict === 'CONVERGED' ? 'ok' : 'bad'}`} role="status">
           <header><Icon name={r.verdict === 'CONVERGED' ? 'check' : 'alert'} size={20} /><strong>{r.verdict === 'CONVERGED' ? 'Identical on every node' : `Not converged: ${r.verdict}`}</strong>
-            <span className="muted">cuts {r.cuts.join(', ') || 'none'} · {r.writes} adds · {(r.ms / 1000).toFixed(1)} s</span></header>
+            <span className="muted">cut {r.cuts.join(', ') || 'none'} · {r.writes} writes · {(r.ms / 1000).toFixed(1)} s</span></header>
           <table className="table table--mono">
             <thead><tr><th>Node</th><th>Events</th><th>Event digest</th><th>State hash</th><th>Policy</th></tr></thead>
             <tbody>{r.rows.map((x) => (
@@ -36,6 +36,7 @@ export function ProvePanel() {
             ))}</tbody>
           </table>
           {r.verdict === 'CONVERGED' && <Chip tone="ok" icon="check">AP with strong eventual consistency: same events in, same state out.</Chip>}
+          {r.reviews > 0 && <Chip tone="warn" icon="scale">{r.reviews} {r.reviews === 1 ? 'decision is' : 'decisions are'} waiting in the Review tab: every node shows the same safe value until a supervisor decides.</Chip>}
         </div>
       )}
     </div>
