@@ -1,0 +1,16 @@
+{
+  "test": "F1 randomized convergence",
+  "result": "passed",
+  "examples": 227,
+  "nodes": 3,
+  "writes": 2124,
+  "retries_with_same_op_id": 642,
+  "supervisor_decisions": 54,
+  "partial_deliveries": 324,
+  "full_syncs": 237,
+  "tampered_deliveries_rejected": 371,
+  "events_compared_at_the_end": 2124,
+  "cases": "fixed (same every run)",
+  "policy_version": 1,
+  "hypothesis": "6.169.0"
+}
