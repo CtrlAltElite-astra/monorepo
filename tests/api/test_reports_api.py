@@ -333,7 +333,7 @@ def test_history_lists_every_event_in_hlc_order_with_supersedes(create, client, 
     assert clocks == sorted(clocks)
     for e in events:  # exactly what was stored plus two audit columns: every hash still verifies
         assert e["hash"] == canonical.event_hash({k: v for k, v in e.items() if k not in ("sig_status", "carried")})
-    assert [e["sig_status"] for e in events] == ["unsigned", "verified", "verified", "verified"]  # pun:1 was unsigned
+    assert [e["sig_status"] for e in events] == ["verified", "verified", "verified", "verified"]
     assert [e["carried"] for e in events] == [False] * 4
     plain = [{k: v for k, v in e.items() if k not in ("sig_status", "carried")} for e in events]
     assert plain == sorted(stored_events(region), key=lambda e: (e["hlc"][0], e["hlc"][1], e["origin"], e["seq"]))

@@ -311,9 +311,9 @@ def test_review_is_newest_first(client, mk_event):
 # ---- history: signature status and the carried flag ---------------------------------------------------
 def test_history_reports_signature_status_and_carried(client, region, mk_event):
     new_cart(client)
-    ingest.ingest([mk_event("pun", 1, "NOTE", CART, value={"text": "unsigned"}),
-                   mk_event("pun", 2, "NOTE", CART, value={"text": "signed"}, signed=True)], source="pun")
-    with store.tx() as conn:
+    ingest.ingest([mk_event("pun", 2, "NOTE", CART, value={"text": "signed"}, signed=True)], source="pun")
+    with store.tx() as conn:  # a legacy unsigned row cannot arrive through ingest any more; plant it directly
+        store.insert_event_if_absent(conn, mk_event("pun", 1, "NOTE", CART, value={"text": "unsigned"}, signed=False))
         store.mark_carried(conn, ["pun:2"])
     by_id = {e["event_id"]: e for e in client.get(f"/v1/reports/{CART}/history").json()}
     assert by_id["mum:1"]["sig_status"] == "verified" and by_id["mum:1"]["carried"] is False

@@ -33,8 +33,9 @@ URL = {r: f"http://127.0.0.1:{p}" for r, p in PORTS.items()}
 # In-Process Unit/Correctness Tests for Lane D (Fast, In-Memory DBs)
 # ==============================================================================
 
-def test_t8_sequence_gap_and_contiguous_watermark():
+def test_t8_sequence_gap_and_contiguous_watermark(monkeypatch, tmp_path):
     """T8: deliver seq 3 before seq 2 -> contiguous stays at 1, then advances to 3."""
+    monkeypatch.setenv("PUBLIC_KEYS_FILE", str(tmp_path / "no-registry.json"))  # unprovisioned: shape and hash only
     with tempfile.TemporaryDirectory() as tmp:
         db = str(Path(tmp) / "test_gap.db")
         store.init(db)
@@ -95,8 +96,9 @@ def test_t8_sequence_gap_and_contiguous_watermark():
             store.close()
 
 
-def test_t1_tampered_and_duplicate_quarantine():
+def test_t1_tampered_and_duplicate_quarantine(monkeypatch, tmp_path):
     """T1/T10: Tampered hash or duplicate id mismatch is quarantined and counted."""
+    monkeypatch.setenv("PUBLIC_KEYS_FILE", str(tmp_path / "no-registry.json"))  # unprovisioned: shape and hash only
     with tempfile.TemporaryDirectory() as tmp:
         db = str(Path(tmp) / "test_tamper.db")
         store.init(db)

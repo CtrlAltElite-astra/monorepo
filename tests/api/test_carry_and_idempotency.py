@@ -96,14 +96,14 @@ def test_carry_rejects_a_forged_signature(keys, client, mk_event):
 
 
 def test_carry_rejects_unsigned_and_unknown_origin(keys, client, mk_event):
-    unsigned = mk_event("pun", 1, "CREATE", "R-pun-1", value=create_value())
-    stranger = mk_event("ghost", 1, "CREATE", "R-ghost-1", value=create_value())
+    unsigned = mk_event("pun", 1, "CREATE", "R-pun-1", value=create_value(), signed=False)
+    stranger = mk_event("ghost", 1, "CREATE", "R-ghost-1", value=create_value(), signed=False)
     results = carry(client, [unsigned, stranger]).json()["results"]
     assert [r["reason"] for r in results] == ["bad_sig", "unknown_origin"]
 
 
 def test_carry_is_disabled_without_a_key_registry(client, mk_event):
-    ev = mk_event("pun", 1, "CREATE", "R-pun-1", value=create_value())
+    ev = mk_event("pun", 1, "CREATE", "R-pun-1", value=create_value(), signed=False)
     (res,) = carry(client, [ev]).json()["results"]
     assert res["reason"] == "unknown_origin"        # fails closed, never trusts an unsigned event
 

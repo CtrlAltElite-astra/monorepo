@@ -81,11 +81,11 @@ def create_value(title="Flooded road", severity=3):
 
 @pytest.fixture
 def mk_event(region):
-    """mk_event(origin, seq, type, report_id, ..., signed=False) -> a well-formed event as a peer would send it.
+    """mk_event(origin, seq, type, report_id, ..., signed=True) -> a well-formed event as a peer would send it.
 
     signed=True signs it with `origin`'s own key (created on demand), exactly as that node would."""
     def _mk(origin, seq, type_, report_id, field=None, value=None, supersedes=(), hlc=None, op_id=None,
-            observed=None, signed=False, actor=None):
+            observed=None, signed=True, actor=None):
         ev = dict(v=1, event_id=f"{origin}:{seq}", origin=origin, seq=seq, report_id=report_id,
                   type=type_, field=field, value=value, supersedes=list(supersedes),
                   hlc=list(hlc or (4_000_000_000_000 + seq, 0)), priority=1, op_id=op_id, observed=observed,

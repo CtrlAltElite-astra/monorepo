@@ -6,7 +6,7 @@ the receiver's business rules.
 """
 from contracts.schemas import EVENT_REQUIRED
 from region import store
-from region.engine import canonical
+from region.engine import canonical, signing
 from region.engine.derive import derive
 from region.sync import state
 
@@ -28,17 +28,14 @@ def ingest(events: list, source: str) -> dict:
                 stats["rejected"] += 1
                 stats["rejected_list"].append({"event_id": ev["event_id"], "reason": "bad_hash"})
                 continue
-            # Optional Ed25519 signature verification if trust module is active (PDF 2 Phase 2)
-            if ev.get("sig") is not None:
-                try:
-                    from region.trust import signing
-                    if hasattr(signing, "verify") and not signing.verify(ev["origin"], ev["hash"], ev["sig"]):
-                        store.quarantine(conn, ev, source, "bad_sig")
-                        stats["rejected"] += 1
-                        stats["rejected_list"].append({"event_id": ev["event_id"], "reason": "bad_sig"})
-                        continue
-                except (ImportError, AttributeError):
-                    pass
+            # Fail closed (plan 6.2): once any key is registered (verification is on), a received event
+            # must carry a valid signature by its origin. With no registry at all (unprovisioned dev/test
+            # nodes) there is nothing to verify against, so only shape and hash are checked.
+            if signing.public_keys() and not signing.verify(ev["origin"], ev["hash"], ev.get("sig")):
+                store.quarantine(conn, ev, source, "bad_sig")
+                stats["rejected"] += 1
+                stats["rejected_list"].append({"event_id": ev["event_id"], "reason": "bad_sig"})
+                continue
             r = store.insert_event_if_absent(conn, ev)
             if r == "mismatch":
                 store.quarantine(conn, ev, source, "id_reused")

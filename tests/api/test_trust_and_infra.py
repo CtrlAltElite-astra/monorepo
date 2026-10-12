@@ -107,11 +107,8 @@ def test_an_event_that_arrives_by_carry_is_marked_carried_in_history(client, mk_
     assert again.json()["results"] == [{"event_id": "pun:1", "result": "dup"}]
 
 
-@pytest.mark.xfail(strict=True, reason="Plan 6.2: a received event is checked for signature too. Today peers authenticate "
-                                       "with X-Peer-Token, so ingest accepts an UNSIGNED foreign event (contracts.md 7). "
-                                       "Remove this xfail when ingest fails closed.")
 def test_an_unsigned_foreign_event_is_rejected(client, mk_event):
-    ev = mk_event("pun", 1, "CREATE", "R-aaaaaaaa", value=create_value("Dev"))  # no signature at all
+    ev = mk_event("pun", 1, "CREATE", "R-aaaaaaaa", value=create_value("Dev"), signed=False)  # no signature at all
     assert ingest.ingest([ev], source="pun")["rejected"] == 1
 
 
