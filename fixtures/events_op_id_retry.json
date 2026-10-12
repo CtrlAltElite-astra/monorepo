@@ -1,0 +1,161 @@
+{
+  "description": "A retried operation (same op_id) produced two events on two nodes. derive() must count each operation once: quantity 1, and no phantom conflict.",
+  "events": [
+    {
+      "v": 1,
+      "event_id": "mum:1",
+      "origin": "mum",
+      "seq": 1,
+      "report_id": "R-c4177003",
+      "type": "CREATE",
+      "field": null,
+      "value": {
+        "title": "Chitra",
+        "description": "",
+        "category": "cart",
+        "severity": 1,
+        "status": "open",
+        "assigned_team": null,
+        "location": null,
+        "people_estimate": null
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277000000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "op-create-chitra",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "b3fb33d419385e4ea5ca6b24d8a444412daad4167e4b9c324a54110e8ed6065c",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "mum:2",
+      "origin": "mum",
+      "seq": 2,
+      "report_id": "R-c4177003",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"KURTA-01\",\"name\":\"Cotton kurta\",\"qty\":1,\"price\":899,\"user\":\"Chitra\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277001000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-retry-add",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "d036595470b82dc9eb659b19796236f54b2fd2fcd7ae971bd375246040fc7305",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "pun:1",
+      "origin": "pun",
+      "seq": 1,
+      "report_id": "R-c4177003",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"KURTA-01\",\"name\":\"Cotton kurta\",\"qty\":1,\"price\":899,\"user\":\"Chitra\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277001400,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-retry-add",
+      "actor": "agent-pun-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "1584a503c69d798e2f5484e077c4938f0fd5053aeeaebf58439a719ead7e89e9",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "mum:3",
+      "origin": "mum",
+      "seq": 3,
+      "report_id": "R-c4177003",
+      "type": "SET",
+      "field": "status",
+      "value": "assigned",
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1760277002000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "op-retry-checkout",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "4a71e0079661560318ff00759de8f8e2ddb56a8e302bf89fdcf1c17f8be30392",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "pun:2",
+      "origin": "pun",
+      "seq": 2,
+      "report_id": "R-c4177003",
+      "type": "SET",
+      "field": "status",
+      "value": "assigned",
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1760277002400,
+        0
+      ],
+      "priority": 1,
+      "op_id": "op-retry-checkout",
+      "actor": "agent-pun-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "f7c98f2c55425561a824cf5597be2ec6cf79e731ea716998e4c9b62b3aae9d3d",
+      "sig": null
+    }
+  ],
+  "expected": {
+    "sku_quantities": {
+      "KURTA-01": 1
+    },
+    "state": {
+      "status": "assigned"
+    },
+    "conflicts": [],
+    "op_groups": {
+      "op-retry-add": [
+        "mum:2",
+        "pun:1"
+      ],
+      "op-retry-checkout": [
+        "mum:3",
+        "pun:2"
+      ]
+    }
+  }
+}

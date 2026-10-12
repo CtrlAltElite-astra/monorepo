@@ -1,0 +1,256 @@
+{
+  "description": "Plan 10.1. mum:1-2 are replicated before the link is cut; mum:3-5 and pun:1-3 are written during the partition. After heal both nodes must derive the `expected` result.",
+  "partition_starts_after": "mum:2",
+  "events": [
+    {
+      "v": 1,
+      "event_id": "mum:1",
+      "origin": "mum",
+      "seq": 1,
+      "report_id": "R-a11ce001",
+      "type": "CREATE",
+      "field": null,
+      "value": {
+        "title": "Alice",
+        "description": "",
+        "category": "cart",
+        "severity": 1,
+        "status": "open",
+        "assigned_team": null,
+        "location": null,
+        "people_estimate": null
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277000000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "op-create-alice",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "93797487de604f5a532be0fb6e30051e7b5a2eb7ab274abd410d5c3084beb794",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "mum:2",
+      "origin": "mum",
+      "seq": 2,
+      "report_id": "R-a11ce001",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"FCOFF-500\",\"name\":\"Filter coffee 500 g\",\"qty\":1,\"price\":449,\"user\":\"Alice\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277001000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-alice-1",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "951d3d77a7f9fe147590fef2c25cc61bfab7384f6e30dc054bda9c55752fa9f3",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "mum:3",
+      "origin": "mum",
+      "seq": 3,
+      "report_id": "R-a11ce001",
+      "type": "SET",
+      "field": "severity",
+      "value": 5,
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1760277010000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "op-m-speed",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "eccd5bc42b3bf770267a6de1bd704f3c6d059745432a0155dc96359124879fe7",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "mum:4",
+      "origin": "mum",
+      "seq": 4,
+      "report_id": "R-a11ce001",
+      "type": "SET",
+      "field": "assigned_team",
+      "value": "Bhiwandi",
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1760277011000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "op-m-centre",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "e15623c788c2146d75781475fb9410d8bcc37859cf4d14e35331c4901a15e761",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "mum:5",
+      "origin": "mum",
+      "seq": 5,
+      "report_id": "R-a11ce001",
+      "type": "SET",
+      "field": "status",
+      "value": "closed",
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1760277012000,
+        0
+      ],
+      "priority": 0,
+      "op_id": "op-m-order",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "observed": [
+        "mum:1",
+        "mum:2",
+        "mum:3"
+      ],
+      "hash": "f36aa4a3d50e1745900b1a228e179e622b4646a780f1804469c9ae25c6f22103",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "pun:1",
+      "origin": "pun",
+      "seq": 1,
+      "report_id": "R-a11ce001",
+      "type": "SET",
+      "field": "severity",
+      "value": 4,
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1760277010500,
+        0
+      ],
+      "priority": 0,
+      "op_id": "op-p-speed",
+      "actor": "agent-pun-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "7393eb83415867214d05d21bd81cb4cea268969ecc455e31f569b239d03fb540",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "pun:2",
+      "origin": "pun",
+      "seq": 2,
+      "report_id": "R-a11ce001",
+      "type": "SET",
+      "field": "assigned_team",
+      "value": "Chakan",
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1760277013000,
+        0
+      ],
+      "priority": 0,
+      "op_id": "op-p-centre",
+      "actor": "agent-pun-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "edcf170210cf7ab47907113e86d35f4731cd013b968dda301303daa4b830f782",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "pun:3",
+      "origin": "pun",
+      "seq": 3,
+      "report_id": "R-a11ce001",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"GIFT-500\",\"name\":\"Gift card\",\"qty\":1,\"price\":500,\"user\":\"Alice\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277014000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-p-gift",
+      "actor": "agent-pun-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "ff41e6b4ac66d9eec6e827b3286b921ed3318739fa60372635766b0e7540662c",
+      "sig": null,
+      "observed": [
+        "mum:1"
+      ]
+    }
+  ],
+  "expected": {
+    "state": {
+      "severity": 5,
+      "assigned_team": "Bhiwandi",
+      "status": "closed"
+    },
+    "status_label": "Order placed",
+    "conflicts": {
+      "severity": {
+        "rule": "highest",
+        "needs_review": false
+      },
+      "assigned_team": {
+        "rule": "earliest_hlc",
+        "needs_review": true,
+        "flag": "DOUBLE_DISPATCH"
+      }
+    },
+    "notes_event_ids": [
+      "mum:2",
+      "pun:3"
+    ],
+    "review_items": [
+      "DOUBLE_DISPATCH on assigned_team",
+      "CLOSE_VS_NEW_INFO on status"
+    ]
+  }
+}

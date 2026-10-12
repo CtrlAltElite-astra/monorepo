@@ -14,6 +14,17 @@ function StatusCard({ region, status }) {
       <div className="kv">heads <code>{JSON.stringify(status.heads)}</code></div>
       <div className="kv">events <code>{status.event_count}</code> · quarantined <code>{status.quarantined}</code></div>
       <div className="kv">digest <code>{status.event_digest.slice(0, 10)}</code> state <code>{status.state_hash.slice(0, 10)}</code></div>
+      {status.risk && (
+        <div className="kv" title="data at risk: events not yet confirmed by every peer">
+          at risk <code>{status.risk.unreplicated}</code> · critical <code>{status.risk.critical_unreplicated}</code>
+          {status.risk.oldest_age_ms != null && <> · oldest <code>{Math.round(status.risk.oldest_age_ms / 1000)}s</code></>}
+        </div>
+      )}
+      {status.queues && (
+        <div className="kv" title="pending push per priority lane">
+          queue P0 <code>{status.queues.P0}</code> P1 <code>{status.queues.P1}</code> P2 <code>{status.queues.P2}</code>
+        </div>
+      )}
       <div className="chips">
         {status.quarantined > 0 && (
           <span className="chip bad" title="events rejected for bad hash or reused id">quarantined: {status.quarantined}</span>
@@ -54,7 +65,7 @@ function Row({ region, rep, onChange, onSelect, selected, peerDown }) {
       </td>
       <td>
         {rep.conflicts.map((c) => (
-          <div key={c.field} className="chip warn" title={`${c.rule}: ${c.event_ids.join(', ')}`}>
+          <div key={c.field + c.rule} className="chip warn" title={`${c.rule}: ${c.event_ids.join(', ')}`}>
             {c.field}: {c.values.join(' / ')}
           </div>
         ))}
