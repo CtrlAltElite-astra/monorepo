@@ -171,7 +171,25 @@ number is sent first.
 | 1 normal | everything else |
 | 2 bulk | cart-activity notes and bulk seeds |
 
-## 11. Tests
+## 11. Which received events are accepted
+
+`admit.reject_reason(event, public_keys)` is the one rule for every event this node did not write:
+a pulled page, a push, and an outbox a browser carries after a crash (`POST /v1/carry`). The first
+failing check is the reason `/v1/carry` reports:
+
+| check, in this order | reason | what it stops |
+|---|---|---|
+| an envelope derive() can use, and `event_id` = `origin:seq` | `shape` | junk, or an id that would hide another event |
+| the origin has a public key in `trust/public_keys.json` | `unknown_origin` | events from a node nobody configured |
+| the hash still matches the body | `bad_hash` | a browser editing a carried event |
+| the origin's own Ed25519 signature over the hash | `bad_sig` | a browser or node forging another node's event |
+
+A received event is never checked against business rules: its origin decided them at write time and
+the signature binds them. The same event again is `dup`, never a second copy. `unsigned_ok=True` lets
+an unsigned peer event through on shape and hash alone while some node still writes unsigned events;
+`/v1/carry` never uses it.
+
+## 12. Tests
 
 | claim | test |
 |---|---|
@@ -182,5 +200,8 @@ number is sent first.
 | any arrival order gives the same view (T2) | `tests/engine/test_gates.py`, all 720 orders of six events |
 | the worked example on both nodes (T4), disjoint fields (T5), decisions (T6) | `tests/engine/test_gates.py` |
 | priority lanes and data at risk | `tests/engine/test_priority.py` |
+| forged, edited, unknown and malformed events are rejected and change nothing (T18, engine half) | `tests/engine/test_admit.py` |
+| a node dies holding writes no peer has; the browser carries them; nothing acknowledged is lost (T17) | `tests/failover/test_t17_in_memory.py` (in-memory nodes), `tests/failover/test_t17_live.py` (real processes, kill -9) |
+| three nodes converge under random writes, retries, partitions and tampering (F1) | `tests/fuzz/test_convergence.py`, counts in `tests/fuzz/last_result.json` |
 
-Run them with `pytest tests/engine`.
+Run them with `pytest tests/engine tests/failover tests/fuzz`.

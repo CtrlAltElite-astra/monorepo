@@ -35,6 +35,26 @@ Each region:
 
 Full detail: `docs/` and the two build-plan PDFs (Basic Build Plan, Main Build Plan).
 
+<!-- section: conflict-policy (Lane B, Rahil) -->
+## Conflict policy v1, one line per rule
+
+A conflict is two writes to the same field where neither replaced the other. When it happens every
+node shows the same provisional value, records a receipt with every candidate, and, where a wrong
+guess costs money or a shipment, asks a supervisor. Full table and reasons: [docs/conflict-policy.md](docs/conflict-policy.md).
+
+- **Cart owner, delivery note, category:** the latest write wins (HLC order); no review; the loser stays in history.
+- **Delivery speed:** the highest wins; receipt only, because a lost upgrade is worse than a false one.
+- **Status:** the most active wins (Shopping < Checking out < Paid < Order placed = Cancelled) and a supervisor always reviews.
+- **Fulfilment centre:** the earliest wins; two different centres are flagged `DOUBLE_DISPATCH` for review.
+- **Delivery pin:** the latest wins; review only when two pins are 200 m or more apart, or one is missing.
+- **People estimate:** the highest wins, never the sum; review.
+- **Cart activity:** every added item is kept; adding never conflicts.
+- **Order placed while an unseen item was added elsewhere:** the status stays, and `CLOSE_VS_NEW_INFO` opens a review.
+- **Two supervisors decided differently:** the field rule applies again, flagged `RESOLVE_VS_RESOLVE` for review.
+- **A retried write (same `op_id`):** counts once, so a retried add is still one item.
+- **A received or carried event:** accepted only with a valid shape, a known origin, an unchanged hash and that origin's Ed25519 signature.
+<!-- /section: conflict-policy -->
+
 ## Repository layout
 
 | path | what | single owner |
@@ -74,10 +94,16 @@ Restart proof: stop one region, run `python scripts/run_one.py pun` — data is 
 ## Tests
 
 ```bash
-pytest tests/engine        # pure engine: hash, HLC, derive, digests
+pytest tests/engine        # pure engine: hash, HLC, derive, policy v1, signing, carry admission
+pytest tests/failover      # T17 zero-loss failover + T18 carry integrity (in memory; live once /v1/carry exists)
+pytest tests/fuzz          # F1: three nodes, random writes, retries, partitions, tampering
 pytest tests/integration   # spawns real region processes: replicate, restart, partition, heal
 bash scripts/check_m1.sh   # curl evidence script (needs jq, regions running)
 ```
+
+Last fuzz run (F1, `tests/fuzz/last_result.json`): 216 examples on 3 nodes, 4 407 writes, 1 617 retries
+under the same `op_id`, 260 tampered deliveries rejected, no divergence. The live T17 test skips, naming
+what it is waiting for, until write path v2 and `/v1/carry` are merged.
 
 ## Ports and environment
 
