@@ -12,7 +12,7 @@ Phase 1 ships the interface and `LocalKeyAdapter` (API keys from config). The HT
 adapter arrives in Phase 2 behind the same interface; the contract is contracts/partner-contract.md.
 """
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
 from region import config
 from region.trust import roles
@@ -32,7 +32,7 @@ class AuthDecision:
     region_scope: Optional[str] = None
     credential_id: Optional[str] = None
     mode: Mode = "online"                 # how fresh the trust data behind this decision is
-    status_ver: Optional[str] = None      # version of the revocation/status list used, if any
+    status_ver: Optional[Union[int, str]] = None  # version of the revocation/status list used, if any
     reason: str = ""                      # "" when allowed, else UNKNOWN_CREDENTIAL / FORBIDDEN / ...
 
 

@@ -4,7 +4,7 @@ Purpose: let any engineer or coding agent continue Lane A from exactly where it 
 other context. Read this file first, then the two build-plan PDFs (Basic = PDF 1, Main = PDF 2).
 **Keep the "Progress log" and the checklists up to date after every milestone.**
 
-Last updated: 2026-10-12 (Basic build merged to `main`; PDF 2 Phase 1 for Lane A built and tested on branch `a/phase1-roles-history`, awaiting PR/merge)
+Last updated: 2026-10-12 (all four lanes merged to `main`; Lane A basic build + Phase 1 are on `main`; full suite 162 passed; next is Phase 2)
 
 ---
 
@@ -41,9 +41,12 @@ auto-generated attribution lines, and no tool names, in commit messages, PR text
 - `main` started as ONE commit by Miti that already contained a working Basic build for all four lanes.
   Since then merged via PRs: #1 Lane A basic build (mine), #2 Miti's dashboard/docs (`lane-c`),
   #3 Rahil's engine tests/docs (`lane-B-basic-build`). Lane D (Simrit) had no branch yet when last checked.
-- `a/lane-a-basic-build`: merged (PR #1), done.
-- **Current branch: `a/phase1-roles-history`** (from `main` at `e732a31`): PDF 2 Phase 1 for Lane A.
-  Pushed to origin; PR not opened yet (the user opens/merges PRs; label it `contract`).
+- `a/lane-a-basic-build`: merged (PR #1). `a/phase1-roles-history`: merged (PR #4).
+- Also merged: Simrit's Lane D (PR #5, branch `d/simrit`): push fast path, slow links, `loadgen.py`,
+  `mock_partner.py`, scenario scripts, `tests/integration/test_lane_d.py`. Its own notes: `LANE_D_HANDOFF.md`.
+- `main` is at `8d68cee`. **Current working branch: `a/post-merge-notes`** (docs/contract fixes only;
+  the user opens and merges PRs). Start Phase 2 work on a new branch from the latest `main`.
+- NOT on `main` yet: Rahil's policy v1 (the engine is still `POLICY_VERSION = 0`, rule `v0-latest`).
 - Working copy on the user's machine: `C:\Users\dell\Desktop\Codeastra\monorepo` (Windows 11,
   PowerShell; Python 3.14 venv at `.venv`, Node 24).
 
@@ -61,6 +64,22 @@ cd dashboard; copy .env.example .env; npm install; npm run dev # http://localhos
 ```
 
 Baseline before any Lane A change: `pytest tests/engine tests/integration` -> **17 passed**.
+Merged `main` (all four lanes), 2026-10-12: `pytest tests` -> **162 passed** (about 55 s; the slow part is
+real-process integration tests).
+
+Run the whole project live (verified 2026-10-12 on merged `main`):
+
+```powershell
+.\.venv\Scripts\python.exe scripts/run_regions.py            # mum :8001 + pun :8002 (one dying no longer stops the other)
+cd dashboard; npm run dev                                    # http://localhost:5173
+.\.venv\Scripts\python.exe scripts/scenarios/split_brain.py  # cut, write both sides, heal, converge
+.\.venv\Scripts\python.exe scripts/scenarios/throttle.py     # slow link: severity-5 report overtakes 20 bulk notes (~1 s)
+.\.venv\Scripts\python.exe scripts/mock_partner.py --port 8000   # mock partner (key "partner-secret-key")
+```
+Live result: both regions converge (same event_digest and state_hash), level HEALTHY, every report
+REPLICATED with `stale_possible` false, same list order on both, CORS preflights from
+`http://localhost:5173` pass for POST/PATCH/admin links. `/v1/review` and `/v1/metrics` answer 404
+(not built; the dashboard tolerates that). Stop everything with Ctrl+C in each terminal.
 
 ## 5. Lane A scope (PDF 1, Basic build)
 
@@ -184,7 +203,16 @@ Phase 4: negative security tests (T10, T13), README API samples with curl.
 - **Miti**: `VITE_SUPERVISOR_KEY` (resolve button) should be `dev-supervisor` once that key exists;
   an officer key gets 403 on resolve. Reports now carry `consistency.confirmed_by/awaiting/stale_possible`
   (the drawer already reads `stale_possible`).
-- **Simrit**: `scripts/mock_partner.py` should implement the endpoints in `contracts/partner-contract.md`.
+- **Simrit**: `scripts/mock_partner.py` now exists and its paths/shapes match `contracts/partner-contract.md`.
+  Differences found on 2026-10-12 (contract updated to cover the first two; mock unchanged):
+  it answers a forged/revoked credential with HTTP 200 + `valid: false` (our adapter must treat that as
+  invalid, like 401/403); it returns `region_scope: "all"` (accepted); and it never enforces `X-Api-Key`
+  (`verify_partner_key` is defined but unused), so a negative test for a wrong partner key cannot use it
+  yet. Not blocking.
+- **Simrit** (still open): default `dev-supervisor` / `dev-admin` keys in `config.py` and `scripts/run_one.py`;
+  `run_one.py` still only provisions `dev-officer`.
+- **Rahil** (still open): policy v1. Live proof it is missing: split_brain.py ends with severity 4
+  (`v0-latest`), where PDF 2 policy would show 5 (highest). After it merges run `scripts/gen_fixtures.py`.
 - **Rahil**: when policy v1 changes `derive`, run `python scripts/gen_fixtures.py` and commit the fixtures;
   `tests/api/test_contracts.py::test_report_fixture_is_what_derive_produces` fails until you do.
 
@@ -204,3 +232,16 @@ Phase 4: negative security tests (T10, T13), README API samples with curl.
   consistency block, history endpoint, kill -9 test. 156 tests green; real-process check passed.
   **Next: open a PR for `a/phase1-roles-history` (label `contract`), then Phase 2** (resolve/review,
   Ed25519 signing, idempotency keys), which depends on Rahil's policy v1 receipts landing in `main`.
+- 2026-10-12 — PR #4 (Phase 1) and #5 (Simrit, Lane D) merged. Pulled `main` (`8d68cee`): 162 tests pass.
+  Ran the project live (2 regions + dashboard dev server + Simrit's split_brain and throttle scenarios):
+  all converge, 20/20 live checks pass. Found: mock partner semantics (see section 8b) and that policy v1
+  is still missing. Partner contract amended (`valid:false` = invalid, `region_scope` may be `all`,
+  `exp` in Unix seconds); `adapter.AuthDecision.status_ver` now accepts int or str.
+  **Next: Phase 2 on a fresh branch.** Parts that do not need policy v1: Ed25519 signing in `trust/signing.py`
+  (Simrit's `ingest.py` already calls `trust.signing.verify(origin, hash, sig) -> bool` when an event has a
+  `sig`, and quarantines `bad_sig`; so `trust/signing.py` must export exactly that function),
+  idempotency keys. Resolve/review wait for Rahil's receipts.
+  **Security gap to close in Phase 2:** `ingest.py` only verifies events whose `sig` is not null and
+  silently skips verification if `signing` is missing. Once signing exists, an attacker could strip `sig`
+  to bypass it. Agree with Simrit a rule that events from another origin MUST carry a valid `sig`
+  (fail closed, quarantine `unsigned`/`bad_sig`), behind a setting so tests with unsigned fixtures still run.
