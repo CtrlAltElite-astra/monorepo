@@ -1,7 +1,7 @@
 // Picks the backend: VITE_MODE=mock (default, the in-browser simulator) or live (the real regions).
 // A ?mode=live|mock query parameter overrides it so a demo can switch without a rebuild.
 import { createLiveChaos, createLiveTransport } from './liveClient'
-import { createMock, type MockApi } from './mockClient'
+import { createMock, DEMO_LIMITS, type MockApi } from './mockClient'
 import type { Chaos, Mode, Transport } from './types'
 import type { SimWorld } from '../sim/world'
 
@@ -23,7 +23,7 @@ export function resolveMode(): Mode {
 
 export function createApi(mode: Mode = resolveMode(), startNodes = 3): Api {
   if (mode === 'live') return { mode, transport: createLiveTransport(), chaos: createLiveChaos(), world: null, startNodes: 3 }
-  const mock: MockApi = createMock({ joined: startNodes === 2 ? ['mum', 'pun'] : ['mum', 'pun', 'del'] })
+  const mock: MockApi = createMock({ joined: startNodes === 2 ? ['mum', 'pun'] : ['mum', 'pun', 'del'], limits: DEMO_LIMITS })
   return { mode, transport: mock.transport, chaos: mock.chaos, world: mock.world, startNodes }
 }
 

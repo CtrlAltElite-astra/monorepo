@@ -25,6 +25,8 @@ export const COMMIT_FIXED_MS = 12
 export const COMMIT_PER_WRITE_MS = 1.5
 /** time the commit loop spends per write when batches are full */
 export const serviceMs = (batch: number) => (COMMIT_FIXED_MS + COMMIT_PER_WRITE_MS * batch) / batch
+/** A region that turns a write away asks the caller to leave it alone for this long (the Retry-After of a 503). */
+export const REGION_RETRY_AFTER_S = 2
 
 export interface TokenDecision { allowed: boolean; limit: number; remaining: number; retryAfterMs: number }
 
@@ -95,12 +97,22 @@ export class SimNode {
   private busyUntil = 0
   private pending: number[] = []
 
+  // the log is only ever appended to, so everything derived from it can be cached by how much of it there is
   private cache = new Map<string, { n: number; view: Derived }>()
-  private version = 0
+  private byReport = new Map<string, EventEnvelope[]>()
+  private reportVersion = new Map<string, number>()
+  private memos = new Map<string, { size: number; value: unknown }>()
 
   constructor(public id: RegionId) {}
 
-  bump() { this.version++ }
+  /** A value derived from the whole log (digest, state hash), recomputed only after the log has grown. */
+  memo<T>(key: string, compute: () => T): T {
+    const hit = this.memos.get(key)
+    if (hit && hit.size === this.events.size) return hit.value as T
+    const value = compute()
+    this.memos.set(key, { size: this.events.size, value })
+    return value
+  }
 
   // ---- the per-actor limit: the same bucket as region/api/ratelimit.py -------------------------------------------
   private tokensOf(actor: string, now: number): number {
@@ -129,12 +141,11 @@ export class SimNode {
   }
 
   // ---- the region limit: writes accepted from clients in the last second -----------------------------------------
-  /** Whole seconds a client should wait when the region is at its limit; 0 when it can take the write. */
+  /** The Retry-After (whole seconds) when the region is at its limit; 0 when it can take the write. */
   regionRetryS(now: number): number {
     if (this.regionLimit <= 0) return 0
     const recent = this.acceptedAt.filter((t) => now - t < 1000)
-    if (recent.length < this.regionLimit) return 0
-    return Math.max(1, Math.ceil((Math.min(...recent) + 1000 - now) / 1000))
+    return recent.length < this.regionLimit ? 0 : REGION_RETRY_AFTER_S
   }
 
   noteAccepted(now: number) {
@@ -166,19 +177,21 @@ export class SimNode {
   }
 
   view(reportId: string): Derived {
+    const version = this.reportVersion.get(reportId) ?? 0
     const hit = this.cache.get(reportId)
-    if (hit && hit.n === this.version) return hit.view
-    const view = derive([...this.events.values()].filter((e) => e.report_id === reportId))
-    this.cache.set(reportId, { n: this.version, view })
+    if (hit && hit.n === version) return hit.view
+    const view = derive(this.byReport.get(reportId) ?? [])
+    this.cache.set(reportId, { n: version, view })
     return view
   }
 
+  /** a copy: callers sort it */
   eventsOf(reportId: string): EventEnvelope[] {
-    return [...this.events.values()].filter((e) => e.report_id === reportId)
+    return [...(this.byReport.get(reportId) ?? [])]
   }
 
   reportIds(): string[] {
-    return [...new Set([...this.events.values()].map((e) => e.report_id))]
+    return [...this.byReport.keys()]
   }
 
   /** newest CREATE first; reports still waiting for their CREATE are hidden */
@@ -202,11 +215,15 @@ export class SimNode {
   }
 
   insert(ev: EventEnvelope): void {
+    if (!this.events.has(ev.event_id)) {
+      const list = this.byReport.get(ev.report_id)
+      if (list) list.push(ev); else this.byReport.set(ev.report_id, [ev])
+    }
     this.events.set(ev.event_id, ev)
+    this.reportVersion.set(ev.report_id, (this.reportVersion.get(ev.report_id) ?? 0) + 1)
     if (ev.op_id && !this.byOp.has(ev.op_id)) this.byOp.set(ev.op_id, ev.event_id)
     if (ev.origin === this.id) this.seq = Math.max(this.seq, ev.seq)
     this.advance(ev.origin)
-    this.bump()
   }
 
   link(peer: string): LinkState { return (this.links[peer] ||= { mode: 'up', delay_ms: 0, rate_bps: 0 }) }

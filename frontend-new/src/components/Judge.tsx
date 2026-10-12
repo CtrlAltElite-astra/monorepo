@@ -107,26 +107,26 @@ export function NodeCard({ id }: { id: RegionId }) {
 
 export function NodeStrip() {
   const d = useDemo()
-  const ids = d.regions.map((r) => r.id)
+  const ids = d.members.map((r) => r.id)
   return <div className="nodes">{ids.map((id) => <NodeCard key={id} id={id} />)}</div>
 }
 
 export function RequestStream() {
-  const { sdkState } = useDemo()
+  const { sdkState, joined } = useDemo()
   const tl = sdkState.timeline.slice(-30)
   const lastEntry = tl.at(-1)
   return (
     <div className="stream card">
       <header className="card__head card__head--tight"><h3><Icon name="activity" size={16} /> Requests</h3>
-        <div className="legend">{(['mum', 'pun', 'del'] as const).map((r) => <span key={r}><NodeDot id={r} size={8} />{NODE_NAME[r]}</span>)}<span><i className="dot-fail" />failed attempt</span></div>
+        <div className="legend">{joined.map((r) => <span key={r}><NodeDot id={r} size={8} />{NODE_NAME[r]}</span>)}<span><i className="dot-fail" />failed attempt</span><span><i className="dot-refused" />refused by a limit</span></div>
       </header>
       <div className="stream__dots" aria-live="polite">
         {!tl.length && <span className="muted">Add something to a cart and watch the request land.</span>}
         {tl.map((e) => (
           <span key={e.n} className="stream__item">
             {e.failedOn.map((f, i) => <i key={i} className="dot-fail" title={`${NODE_NAME[f]} did not answer`} />)}
-            <i className={`dot ${e.queued ? 'dot--queued' : ''} ${e.tried ? 'dot--failover' : ''}`} style={{ background: e.queued ? 'transparent' : nodeColor(e.region) }}
-              title={`${e.label}\n${e.queued ? 'kept on the device' : NODE_NAME[e.region ?? ''] ?? '—'} · ${fmtMs(e.ms)}${e.tried ? ` · after ${e.tried} failed attempt` : ''}`} />
+            <i className={`dot ${e.queued ? 'dot--queued' : ''} ${e.tried ? 'dot--failover' : ''} ${e.refused ? 'dot--refused' : ''}`} style={{ background: e.queued || e.refused ? 'transparent' : nodeColor(e.region) }}
+              title={`${e.label}\n${e.queued ? 'kept on the device' : NODE_NAME[e.region ?? ''] ?? '—'} · ${fmtMs(e.ms)}${e.tried ? ` · after ${e.tried} failed attempt` : ''}${e.refused ? ' · refused by the shopper’s limit (429)' : ''}`} />
           </span>
         ))}
       </div>
@@ -157,6 +157,7 @@ export function Counters() {
       <div className="counters__extra">
         <Chip tone={c.failovers ? 'warn' : 'muted'} icon="refresh">{plural(c.failovers, 'failover')}</Chip>
         <Chip tone={c.carried ? 'info' : 'muted'} icon="package">{c.carried} carried</Chip>
+        {c.refused > 0 && <Chip tone="info" icon="clock" title="Writes a region answered with 429 because the shopper had used up their own allowance. An answer, not an error.">{c.refused} refused by the limit</Chip>}
         {c.queued > 0 && <Chip tone="warn" icon="clock">{c.queued} kept on device</Chip>}
         {c.carryRejected > 0 && <Chip tone="bad" icon="shield">{c.carryRejected} rejected</Chip>}
       </div>
@@ -166,7 +167,7 @@ export function Counters() {
 
 export function RiskMeter() {
   const d = useDemo()
-  const rows = d.regions.map((r) => ({ id: r.id, s: d.snaps[r.id]?.ok ? d.snaps[r.id]!.status : undefined }))
+  const rows = d.members.map((r) => ({ id: r.id, s: d.snaps[r.id]?.ok ? d.snaps[r.id]!.status : undefined }))
   const max = Math.max(8, ...rows.map((r) => r.s?.risk?.unreplicated ?? 0))
   return (
     <div className="risk card">

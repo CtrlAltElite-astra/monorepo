@@ -1,13 +1,16 @@
 // MOCK mode: an in-browser simulator of three nodes behind the same Transport the live client implements.
 import { newReportId } from '../lib/util'
-import { addNoteText, PRODUCTS, SHOPPERS } from '../domain/shop'
+import { addNoteText, HOME_REGION, PRODUCTS, SHOPPERS } from '../domain/shop'
 import { handle, SimChaos, SimTransport } from '../sim/api'
-import { SimWorld, type SimOptions } from '../sim/world'
-import type { RegionId } from './types'
+import { ALL_REGIONS, SimWorld, type SimOptions } from '../sim/world'
 
 export interface MockApi { world: SimWorld; transport: SimTransport; chaos: SimChaos }
 
-const HOME: Record<string, RegionId> = { Alice: 'mum', Bob: 'pun', Chitra: 'del', Dev: 'mum', Esha: 'pun' }
+/** The simulator is a demo world, so its per-shopper limit starts ON (a real region starts with it off): ten requests at once,
+ *  one more every second. Bursts are not limited by it: the load test spreads over many synthetic actors. */
+export interface DemoLimits { burst: number; refillPerS: number }
+export const DEMO_LIMITS: DemoLimits = { burst: 10, refillPerS: 1 }
+
 const BASKET: Record<string, string[]> = {
   Alice: ['FCOFF-500', 'CHAI-01'], Bob: ['EARBUD-01'], Chitra: ['KURTA-01', 'BOTTLE-01'], Dev: ['LAMP-01'], Esha: ['MAT-01', 'GIFT-500'],
 }
@@ -15,7 +18,7 @@ const BASKET: Record<string, string[]> = {
 /** Appendix B: each shopper has one partly filled cart so no screen starts empty. */
 export function seed(world: SimWorld) {
   for (const who of SHOPPERS) {
-    const home = HOME[who]
+    const home = HOME_REGION[who]
     if (!world.isJoined(home)) continue
     const node = world.node(home)
     const reportId = newReportId()
@@ -28,10 +31,11 @@ export function seed(world: SimWorld) {
   world.settleNow()
 }
 
-export function createMock(opts: SimOptions & { seeded?: boolean } = {}): MockApi {
-  const { seeded = true, ...simOpts } = opts
+export function createMock(opts: SimOptions & { seeded?: boolean; limits?: DemoLimits } = {}): MockApi {
+  const { seeded = true, limits, ...simOpts } = opts
   const world = new SimWorld(simOpts)
   if (seeded) seed(world)
+  if (limits) for (const id of ALL_REGIONS) { const n = world.node(id); n.actorBurst = limits.burst; n.actorRefill = limits.refillPerS } // after the seed: it writes thirteen carts' worth at once
   // the world's clock is started by whoever owns it (the demo's effect), so StrictMode double-mounts cannot leak timers
   return { world, transport: new SimTransport(world), chaos: new SimChaos(world) }
 }

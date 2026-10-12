@@ -8,6 +8,7 @@ import './styles/demo.css'
 import './styles/syncshield.css'
 import './styles/console.css'
 import './styles/motion.css'
+import './styles/scale.css'
 import { initMotion } from './lib/motion'
 
 document.documentElement.dataset.theme = 'light'

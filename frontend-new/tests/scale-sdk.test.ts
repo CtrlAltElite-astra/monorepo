@@ -111,13 +111,40 @@ describe('a 503 is "busy", not a failure (R3)', () => {
     expect(last()).toMatchObject({ region: 'pun', tried: 0 }) // Mumbai is avoided while busy: no second bounce
 
     config(world, 'mum', { region_write_limit_per_s: 0 })
-    await advance(1200) // Retry-After has passed
+    await advance(2300) // Retry-After (2 s) has passed
     expect(client.routeFor('mum')).toMatchObject({ region: 'mum', state: 'ok' })
     await add(alice.id, 'Alice', 'mum')
     expect(last()).toMatchObject({ region: 'mum', tried: 0 })
     expect(world.node('mum').view(alice.id).state.notes).toHaveLength(4) // all four acknowledged writes are there
     await advance(6000)
     expect(world.node('pun').view(alice.id).state.notes).toHaveLength(4)
+  })
+
+  it('refusals that follow one another back off: 2 s, 4 s, then 5 s at most; a good answer starts again at 2 s', async () => {
+    const { client, world, advance, cart, add } = await started()
+    const alice = await cart('Alice', 'mum')
+    await advance(1100)
+    config(world, 'mum', { region_write_limit_per_s: 1 })
+    await add(alice.id, 'Alice', 'mum') // the one write Mumbai takes this second
+    const busy = () => client.routeFor('mum').busyForMs
+    const refused = async () => { // another client keeps Mumbai at its limit, so this attempt is refused as well
+      handle(world, 'mum', 'POST', `/v1/reports/${alice.id}/notes`, { text: 'x', op_id: `other-${Math.random()}` }, 'officer', 'someone-else')
+      await add(alice.id, 'Alice', 'mum')
+      return busy()
+    }
+    const waits = [await refused()] // the first refusal: the region's Retry-After, 2 s
+    for (let i = 0; i < 4; i++) { await advance(busy() + 60); waits.push(await refused()) }
+    const near = (got: number, want: number) => got <= want && got > want - 400
+    expect(waits.map((w, i) => near(w, [2000, 4000, 5000, 5000, 5000][i]))).toEqual([true, true, true, true, true])
+
+    config(world, 'mum', { region_write_limit_per_s: 0 })
+    await advance(busy() + 60)
+    await add(alice.id, 'Alice', 'mum') // Mumbai answers again
+    expect(busy()).toBe(0)
+    config(world, 'mum', { region_write_limit_per_s: 1 })
+    await advance(1100)
+    await add(alice.id, 'Alice', 'mum')
+    expect(near(await refused(), 2000)).toBe(true) // the streak was forgotten
   })
 
   it('a move because the region is busy is a relay, not a recovery', async () => {

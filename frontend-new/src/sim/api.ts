@@ -158,15 +158,21 @@ function status(world: SimWorld, node: SimNode): Status {
       last_error: reachable ? null : node.link(p).mode === 'down' ? 'link_down' : 'unreachable',
     }
   }
-  const views = node.reportIds().sort().map((id) => [id, node.view(id)] as const)
-  const lines = [...node.events.values()].map((e) => `${e.event_id}:${e.hash}`).sort().join('\n')
+  const log = node.memo('hashes', () => {
+    const views = node.reportIds().sort().map((id) => [id, node.view(id)] as const)
+    const lines = [...node.events.values()].map((e) => `${e.event_id}:${e.hash}`).sort().join('\n')
+    return {
+      digest: eventHashOf(lines), incomplete: views.filter(([, v]) => v.incomplete).length,
+      state: eventHashOf(canonical(views.map(([id, v]) => [id, { s: v.state, l: v.live, c: v.conflicts.length }]))),
+    }
+  })
   const unrep = node.unreplicated(world.peersOf(node.id))
   const first = [...unrep].sort((x, y) => x.seq - y.seq)[0]
   return {
     region: node.id, level: world.level(node.id), policy_version: POLICY_VERSION, schema_version: 1,
     heads: node.heads(joined), event_count: node.events.size, peers,
-    event_digest: eventHashOf(lines), state_hash: eventHashOf(canonical(views.map(([id, v]) => [id, { s: v.state, l: v.live, c: v.conflicts.length }]))),
-    quarantined: node.quarantine.length, incomplete_reports: views.filter(([, v]) => v.incomplete).length,
+    event_digest: log.digest, state_hash: log.state,
+    quarantined: node.quarantine.length, incomplete_reports: log.incomplete,
     risk: { unreplicated: unrep.length, critical_unreplicated: unrep.filter((e) => e.priority === 0).length, oldest_age_ms: first ? Math.max(0, now - new Date(first.wall).getTime()) : 0 },
     queues: world.pendingByLane(node.id), carry: { ...node.carry },
     load: { writes_per_s: node.writesPerS(now), power: node.power, batch: POWER_BATCH[node.power], queue_depth: node.queueDepth(now) },

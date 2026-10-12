@@ -120,7 +120,7 @@ const blank = (): Counters => ({ requests: 0, errors: 0, failovers: 0, acknowled
 const reportIdOf = (path: string, body: any): string | null =>
   path.match(/^\/v1\/reports\/([^/?]+)/)?.[1] ?? (typeof body?.report_id === 'string' ? body.report_id : null)
 
-type Tracked = RegionHealth & { samples: number[] }
+type Tracked = RegionHealth & { samples: number[]; busyStreak: number }
 
 export class SyncShieldClient {
   readonly opts: SdkOptions
@@ -149,7 +149,7 @@ export class SyncShieldClient {
   }
 
   private fresh(id: RegionId, trusted: boolean): Tracked {
-    return { id, up: trusted, ms: null, goodProbes: 0, level: null, probedAt: null, samples: [], trusted, busyUntil: null }
+    return { id, up: trusted, ms: null, goodProbes: 0, level: null, probedAt: null, samples: [], trusted, busyUntil: null, busyStreak: 0 }
   }
 
   // ---- observation ------------------------------------------------------------------------------------
@@ -159,7 +159,7 @@ export class SyncShieldClient {
 
   getState(): SdkState {
     return {
-      regions: this.members.map((id) => { const { samples: _s, ...h } = this.health.get(id)!; return { ...h } }),
+      regions: this.members.map((id) => { const { samples: _s, busyStreak: _b, ...h } = this.health.get(id)!; return { ...h } }),
       members: [...this.members],
       serving: this.lastRegion, routePreferred: this.health.get(this.opts.preferred)?.trusted ?? true,
       outbox: this.outbox.map((o) => ({ ...o })), timeline: [...this.timeline], counters: { ...this.counters },
@@ -327,14 +327,17 @@ export class SyncShieldClient {
       try {
         const res = await this.t.request<T>(region, method, path, { body: payload, as: opts.as, actor: opts.actor, timeoutMs: this.opts.requestTimeoutMs })
         if (res.status === 503) { // overloaded: not a failure. Avoid this region until Retry-After has passed and use the next one now.
-          const seconds = Math.min(5, Math.max(1, Number(res.headers['retry-after']) || 1))
-          this.health.get(region)!.busyUntil = Date.now() + seconds * 1000
+          const h = this.health.get(region)!
+          const now = Date.now()
+          // refusals that follow one another (the limit is still on) back off: Retry-After, twice that, four times that, never more than 5 s
+          h.busyStreak = h.busyUntil && now - h.busyUntil < 10_000 ? Math.min(h.busyStreak + 1, 4) : 1
+          h.busyUntil = now + Math.min(5, Math.max(1, Number(res.headers['retry-after']) || 1) * 2 ** (h.busyStreak - 1)) * 1000
           failedOn.push(region)
           continue
         }
         if (res.status >= 500) { this.markDown(region); failedOn.push(region); continue }
         const h = this.health.get(region)!
-        h.up = true; h.busyUntil = null
+        h.up = true; h.busyUntil = null; h.busyStreak = 0
         const ev = (res.body as any)?.event as EventEnvelope | undefined
         if (res.status >= 200 && res.status < 300 && ev) {
           this.outboxAdd(ev)

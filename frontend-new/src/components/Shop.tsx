@@ -2,8 +2,9 @@
 // small thumbnail so the cart is never squeezed into a corner. Every action is a real write through the SDK.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useDemo } from '../state/demo'
-import { CENTRES, PRODUCTS, SHOPPERS, SPEEDS, STATUS_LABEL, cartCount, cartItems, cartTotal, isDone, type Product } from '../domain/shop'
+import { CENTRES, PRODUCTS, RESTRICTED_PRODUCT, SHOPPERS, SPEEDS, STATUS_LABEL, cartCount, cartItems, cartTotal, isDone, restrictedProductEnabled, type Product } from '../domain/shop'
 import { rupees } from '../lib/util'
+import { AllowanceMeter, RateNote } from './Allowance'
 import { Icon } from './icons'
 import { ProductPhoto, useScrollReveal } from './Visuals'
 import { Chip, NODE_NAME } from './ui'
@@ -12,6 +13,8 @@ const SKUS = ['FCOFF-500', 'BOTTLE-01', 'KURTA-01', 'EARBUD-01', 'LAMP-01', 'BAG
 const CATALOG = SKUS.map(sku => PRODUCTS.find(p => p.sku === sku)!)
 const CATEGORIES = ['All essentials', 'Home', 'Everyday']
 const HOME_SKUS = ['FCOFF-500', 'LAMP-01']
+// The adults-only item is hidden unless the flag is on (?restricted=1): the check that refuses it joins with the identity lane.
+const CATALOG_WITH_RESTRICTED = [...CATALOG, RESTRICTED_PRODUCT]
 
 export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void; onReview: () => void }) {
   const d = useDemo()
@@ -32,7 +35,8 @@ export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void;
   const status = cart?.state.status || 'open'
   const locked = isDone(status)
   const busy = Object.entries(d.pending).some(([key, val]) => val && key.includes(`:${d.shopper}:`))
-  const products = CATALOG.filter(p => category === CATEGORIES[0] || (category === 'Home' ? HOME_SKUS.includes(p.sku) : !HOME_SKUS.includes(p.sku)))
+  const catalog = useMemo(() => (restrictedProductEnabled() ? CATALOG_WITH_RESTRICTED : CATALOG), [])
+  const products = catalog.filter(p => category === CATEGORIES[0] || (category === 'Home' ? HOME_SKUS.includes(p.sku) : !HOME_SKUS.includes(p.sku)))
 
   useScrollReveal(scroller, [category, d.shopper])
 
@@ -86,10 +90,13 @@ export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void;
             <button key={who} role="tab" aria-selected={d.shopper === who} className={d.shopper === who ? 'selected' : ''} onClick={() => d.setShopper(who)}>
               <span className={`sp-avatar avatar-${i}`}>{who[0]}{n > 0 && <i>{n}</i>}</span>
               <span>{who}</span>
+              <AllowanceMeter who={who} />
             </button>
           )
         })}
       </div>
+      <RateNote />
+      <div id="identity-slot" /> {/* empty on purpose: the identity panel mounts here when the identity lane is joined */}
 
       <div className="sp-filter" role="group" aria-label="Product category" data-reveal>
         {CATEGORIES.map(c => <button key={c} className={category === c ? 'selected' : ''} onClick={() => setCategory(c)}>{c}</button>)}
@@ -101,7 +108,7 @@ export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void;
           <li key={p.sku} className={`sp-product ${justAdded === p.sku ? 'just-added' : ''}`} data-reveal style={{ animationDelay: `${i * 70}ms` }}>
             <ProductPhoto sku={p.sku} className="sp-thumb" />
             <div className="sp-info">
-              <h3>{p.name}</h3>
+              <h3>{p.name}{p.requires && <em className="sp-age" title="Adults only: the buyer has to prove they are over 18">18+</em>}</h3>
               <strong>{rupees(p.price)}</strong>
             </div>
             <button className="sp-add" aria-label={`Add ${p.name}`} disabled={busy} title={locked ? 'This order is finished. Adding an item starts a new cart.' : undefined} onClick={() => void add(p)}>
