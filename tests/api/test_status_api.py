@@ -56,9 +56,9 @@ def test_digests_are_the_engine_digests_and_stable(create, client):
     assert changed["event_digest"] != first["event_digest"] and changed["state_hash"] != first["state_hash"]
 
 
-def test_queues_stay_null_until_the_sync_lane_supplies_them_and_carry_counts_are_present(client):
+def test_queue_depth_risk_and_carry_counters_are_present(client):
     s = status(client)
-    assert "queues" in s and s["queues"] is None
+    assert set(s["queues"]) == {"P0", "P1", "P2"} and set(s["risk"]) == {"unreplicated", "critical_unreplicated", "oldest_age_ms"}
     assert set(s["carry"]) == {"received", "new", "dup", "rejected"}  # this node's carry counters since it started
 
 

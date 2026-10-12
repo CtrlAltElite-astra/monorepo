@@ -53,14 +53,18 @@ def wait_up(url, timeout=20):
 
 def read_db(db):
     """What a restarted process would find. sqlite replays the WAL on this first open."""
-    con = sqlite3.connect(db)
-    try:
-        events = con.execute("SELECT event_id, seq, type, hlc_l, hlc_c FROM events ORDER BY seq").fetchall()
-        views = con.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
-        next_seq = int(con.execute("SELECT v FROM node_meta WHERE k='next_seq'").fetchone()[0])
-        return events, views, next_seq
-    finally:
-        con.close()
+    for attempt in range(20):
+        try:
+            con = sqlite3.connect(db)
+            events = con.execute("SELECT event_id, seq, type, hlc_l, hlc_c FROM events ORDER BY seq").fetchall()
+            views = con.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
+            next_seq = int(con.execute("SELECT v FROM node_meta WHERE k='next_seq'").fetchone()[0])
+            con.close()
+            return events, views, next_seq
+        except sqlite3.OperationalError:
+            time.sleep(0.05)
+    raise RuntimeError("Failed to read db after kill")
+
 
 
 def test_hard_kill_during_writes_loses_no_acknowledged_event_and_the_sequence_continues(tmp_path):

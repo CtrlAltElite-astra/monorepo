@@ -50,6 +50,9 @@ class Settings:
     push_enabled: bool = True
     link_rate_bps: int = 0
     write_batch_ms: int = 0
+    carry_enabled: bool = True
+    write_queue_max: int = 100
+    link_slow_bps: int = 10000
 
 
 def load() -> Settings:
@@ -70,7 +73,20 @@ def load() -> Settings:
         push_enabled=env("PUSH_ENABLED", "1") == "1",
         link_rate_bps=int(env("LINK_RATE_BPS", "0")),
         write_batch_ms=int(env("WRITE_BATCH_MS", "0")),
+        carry_enabled=env("ENABLE_CARRY", "1") == "1",
+        write_queue_max=int(env("WRITE_QUEUE_MAX", "100")),
+        link_slow_bps=int(env("LINK_SLOW_BPS", "10000")),
     )
 
 
 settings = load()
+
+
+def add_peer(name: str, url: str) -> None:
+    """Hot-reload PEERS for node discovery / join (PDF 2 Section 6.8, 6.10)."""
+    global settings
+    import dataclasses
+    new_peers = dict(settings.peers)
+    new_peers[name] = url.rstrip("/")
+    settings = dataclasses.replace(settings, peers=new_peers)
+

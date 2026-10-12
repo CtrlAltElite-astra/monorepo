@@ -25,11 +25,14 @@ class PushQueue:
     def __init__(self):
         self._q = asyncio.PriorityQueue()
         self._queued_ids = set()
+        self._counts = {0: 0, 1: 0, 2: 0}
 
     def put(self, priority: int, hlc: tuple | list, event_id: str) -> None:
         if event_id in self._queued_ids:
             return
         self._queued_ids.add(event_id)
+        p = priority if priority in (0, 1, 2) else 1
+        self._counts[p] = self._counts.get(p, 0) + 1
         hlc_tuple = tuple(hlc) if isinstance(hlc, list) else hlc
         self._q.put_nowait((priority, hlc_tuple, event_id))
 
@@ -40,6 +43,7 @@ class PushQueue:
             except asyncio.QueueEmpty:
                 break
         self._queued_ids.clear()
+        self._counts = {0: 0, 1: 0, 2: 0}
 
     async def take(self, max_n: int = 50, max_wait_ms: int = 100) -> list[str]:
         try:
@@ -47,22 +51,45 @@ class PushQueue:
         except (asyncio.TimeoutError, TimeoutError):
             return []
 
+        prio = item[0] if item[0] in (0, 1, 2) else 1
+        if self._counts.get(prio, 0) > 0:
+            self._counts[prio] -= 1
         batch = [item[2]]
         self._queued_ids.discard(item[2])
         while len(batch) < max_n and not self._q.empty():
             try:
                 nxt = self._q.get_nowait()
+                p_nxt = nxt[0] if nxt[0] in (0, 1, 2) else 1
+                if self._counts.get(p_nxt, 0) > 0:
+                    self._counts[p_nxt] -= 1
                 batch.append(nxt[2])
                 self._queued_ids.discard(nxt[2])
             except asyncio.QueueEmpty:
                 break
         return batch
 
+    def counts(self) -> dict[str, int]:
+        return {
+            "P0": self._counts.get(0, 0),
+            "P1": self._counts.get(1, 0),
+            "P2": self._counts.get(2, 0),
+        }
+
 
 def get_queue(peer: str) -> PushQueue:
     if peer not in _queues:
         _queues[peer] = PushQueue()
     return _queues[peer]
+
+
+def get_queue_counts() -> dict[str, int]:
+    totals = {"P0": 0, "P1": 0, "P2": 0}
+    for q in _queues.values():
+        c = q.counts()
+        for k in totals:
+            totals[k] += c[k]
+    return totals
+
 
 
 def classify_priority(ev: dict) -> int:
