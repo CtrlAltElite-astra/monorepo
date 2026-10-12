@@ -8,7 +8,6 @@ The policy below is the Python mirror of collaboration/true/services/syncshield-
 tested against the same table: collaboration/true/tests/status-policy-cases.json.
 """
 import json
-import os
 from dataclasses import dataclass
 from typing import Optional
 
@@ -97,18 +96,19 @@ class StatusStore:
         return Snapshot(ver=ver, issued_at=iat, statuses=statuses)
 
     def current(self) -> Optional[Snapshot]:
+        # Compare content, not (mtime, size): two snapshots of equal size written within one timestamp tick
+        # would look identical by stat, and a newer one (for example a revocation) would be missed.
         try:
-            st = os.stat(self.path)
+            with open(self.path, "r", encoding="utf-8") as fh:
+                raw = fh.read().strip()
         except OSError:
             self.last_error = "no_file"
             return self._good
-        sig = (st.st_mtime_ns, st.st_size)
-        if sig == self._sig:
+        if raw == self._sig:
             return self._good
-        self._sig = sig
+        self._sig = raw
         try:
-            with open(self.path, "r", encoding="utf-8") as fh:
-                snap = self._verify(fh.read().strip())
+            snap = self._verify(raw)
         except Exception as exc:  # noqa: BLE001 - any failure means "keep the last good one"
             self.last_error = f"rejected: {exc}"
             return self._good
