@@ -521,3 +521,102 @@ describe('7. library facts we rely on (checked, not assumed)', () => {
     expect(a).toBe(b);
   });
 });
+
+// ================================================================================================
+describe('8. contract v1.2: prove ONE attribute (age_over_18 | member), the session records only that', () => {
+  async function member(attributes?: { age_over_18?: boolean; member?: boolean }) {
+    const res = await adminPost('/v1/syncshield/members', { name: 'Attr Member', role: 'officer', ...(attributes ? { attributes } : {}) });
+    expect(res.status).toBe(201);
+    return (await res.json()) as { actor_id: string; attributes: { age_over_18: boolean; member: boolean } };
+  }
+  async function challengeFor(claim?: string) {
+    const res = await sidecarPost('/internal/v1/challenge', claim ? { claim } : {});
+    return { res, ch: (await res.json()) as { challenge_id: string; nonce: string; audience: string; required_claims: string[] } };
+  }
+  async function session(cred: { holder: Holder; credential: string }, claim: string | undefined, shown?: string[]) {
+    const { ch } = await challengeFor(claim);
+    const p = await present(cred, ch, shown ?? ch.required_claims);
+    const res = await sidecarPost('/internal/v1/session', { challenge_id: ch.challenge_id, presentation: p });
+    return { res, body: await res.json(), presentation: p };
+  }
+  const tokenClaims = (token: string) => decodeJwt(token) as { clm?: string[]; dsc?: string[] };
+
+  it('the issuer records both attributes (default yes) and signs them into the credential', async () => {
+    const m = await member({ age_over_18: false });
+    expect(m.attributes).toEqual({ age_over_18: false, member: true });
+    const listed = await (await issuer.request('/v1/syncshield/members', { headers: { 'x-issuer-admin-token': ADMIN } })).json();
+    expect(listed.members.find((x: { actor_id: string }) => x.actor_id === m.actor_id).attributes).toEqual({ age_over_18: false, member: true });
+    const profile = await (await issuer.request('/v1/syncshield/profile')).json();
+    expect(profile.attributes).toEqual(['age_over_18', 'member']);
+  });
+
+  it('an ordinary sign-in discloses neither attribute and the session proves none', async () => {
+    const cred = await issueTo((await member()).actor_id);
+    await syncStatus();
+    const { res, body, presentation } = await session(cred, undefined);
+    expect(res.status).toBe(200);
+    expect(disclosedClaimNames(presentation).sort()).toEqual([...SYNCSHIELD_CLAIMS].sort());
+    expect(body).toMatchObject({ claims: [], disclosed: [] });
+    expect(tokenClaims(body.token)).toMatchObject({ clm: [], dsc: [] });
+  });
+
+  it('asking for age_over_18 discloses exactly that attribute, never member', async () => {
+    const cred = await issueTo((await member()).actor_id);
+    await syncStatus();
+    const { res, body, presentation } = await session(cred, 'age_over_18');
+    expect(res.status).toBe(200);
+    const shown = disclosedClaimNames(presentation);
+    expect(shown).toContain('age_over_18');
+    expect(shown).not.toContain('member');
+    expect(body).toMatchObject({ claims: ['age_over_18'], disclosed: ['age_over_18'] });
+    expect(tokenClaims(body.token)).toMatchObject({ clm: ['age_over_18'], dsc: ['age_over_18'] });
+  });
+
+  it('a member who is not over 18 discloses the fact, and the session proves nothing', async () => {
+    const cred = await issueTo((await member({ age_over_18: false })).actor_id);
+    await syncStatus();
+    const { res, body } = await session(cred, 'age_over_18');
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ claims: [], disclosed: ['age_over_18'] });
+  });
+
+  it('withholding the asked attribute still signs in, without the claim', async () => {
+    const cred = await issueTo((await member()).actor_id);
+    await syncStatus();
+    const { res, body } = await session(cred, 'age_over_18', [...SYNCSHIELD_CLAIMS]);
+    expect(res.status).toBe(200);
+    expect(body).toMatchObject({ claims: [], disclosed: [] });
+  });
+
+  it('disclosing an attribute that was NOT asked for is refused', async () => {
+    const cred = await issueTo((await member()).actor_id);
+    await syncStatus();
+    const notAsked = await session(cred, undefined, [...SYNCSHIELD_CLAIMS, 'member']);
+    expect(notAsked.res.status).toBe(401);
+    expect(notAsked.body.error.code).toBe('wrong_claims');
+    const other = await session(cred, 'age_over_18', [...SYNCSHIELD_CLAIMS, 'member']);
+    expect(other.body.error.code).toBe('wrong_claims');
+    const both = await session(cred, 'age_over_18', [...SYNCSHIELD_CLAIMS, 'age_over_18', 'member']);
+    expect(both.body.error.code).toBe('wrong_claims');
+  });
+
+  it('flipping a disclosed attribute after signing is caught by the real verifier', async () => {
+    const cred = await issueTo((await member({ age_over_18: false })).actor_id);
+    await syncStatus();
+    const { ch } = await challengeFor('age_over_18');
+    const parts = (await present(cred, ch, ch.required_claims)).split('~');
+    for (let i = 1; i < parts.length - 1; i++) {
+      const d = JSON.parse(Buffer.from(parts[i], 'base64url').toString('utf8'));
+      if (d[1] === 'age_over_18') { d[2] = true; parts[i] = Buffer.from(JSON.stringify(d)).toString('base64url'); }
+    }
+    const res = await sidecarPost('/internal/v1/session', { challenge_id: ch.challenge_id, presentation: parts.join('~') });
+    expect(res.status).toBe(401);
+    expect((await res.json()).token).toBeUndefined();
+  });
+
+  it('a challenge for an unknown attribute is a 400, and only one attribute per challenge', async () => {
+    expect((await challengeFor('date_of_birth')).res.status).toBe(400);
+    const res = await sidecarPost('/internal/v1/challenge', { claim: ['age_over_18', 'member'] });
+    expect(res.status).toBe(400);
+  });
+});

@@ -126,8 +126,9 @@ class Demo:
         out = r.stdout.strip().splitlines()
         return json.loads(out[-1]) if out else {"ok": False, "error": r.stderr[-400:]}
 
-    def member(self, name, role):
-        status, m = self.stack.admin("POST", "/v1/syncshield/members", {"name": name, "role": role})
+    def member(self, name, role, **attributes):
+        body = {"name": name, "role": role, **({"attributes": attributes} if attributes else {})}
+        status, m = self.stack.admin("POST", "/v1/syncshield/members", body)
         assert status == 201, m
         code = self.stack.admin("POST", "/v1/syncshield/claim-codes", {"actorId": m["actor_id"], "ttlMinutes": 30})[1]["code"]
         path = self.data / f"wallet-{name.split()[0].lower()}.json"
@@ -243,6 +244,52 @@ def run(d):
     same = until(lambda: C.get(d.url["mum"] + "/v1/status").json()["event_digest"]
                  == C.get(d.url["pun"] + "/v1/status").json()["event_digest"], timeout=15)
     check("Mumbai restarted and both regions hold identical events", bool(same))
+
+    d.step("6b. Prove one attribute", "A restricted product asks for 'over 18' and nothing else; the region keeps only that.")
+    dev = d.member("Dev", "officer")
+    kid = d.member("Chitra", "officer", age_over_18=False)
+    held = d.wallet(dev["wallet"], "holds")
+    say(f"   Dev holds: {', '.join(sorted(k for k in held.get('claims', {}) if k.startswith(('age', 'member'))))} (and the sign-in minimum)")
+    adult = d.login(dev, "mum", "--claim", "age_over_18")
+    check("Dev proves age_over_18 -> claims=['age_over_18'], disclosed=['age_over_18']",
+          adult.get("ok") and adult.get("claims") == ["age_over_18"] and adult.get("disclosed") == ["age_over_18"], adult)
+    who = C.get(d.url["mum"] + "/v1/auth/me", headers=bearer(adult["token"])).json()
+    check("the region's /v1/auth/me agrees, and 'member' was held but never sent",
+          who.get("claims") == ["age_over_18"] and "member" not in who.get("disclosed", []), who)
+    plain = d.login(dev, "mum")
+    check("an ordinary sign-in proves nothing", plain.get("ok") and plain.get("claims") == [], plain)
+    young = d.login(kid, "mum", "--claim", "age_over_18")
+    check("Chitra (under 18) signs in, but nothing is proven",
+          young.get("ok") and young.get("claims") == [] and young.get("disclosed") == ["age_over_18"], young)
+    over = d.wallet(dev["wallet"], "login", "--region", d.url["mum"], "--claims",
+                    "actor_id,syncshield_member,syncshield_role,credential_id,member")
+    check("disclosing an attribute that was not asked for -> 401 wrong_claims",
+          not over.get("ok") and over.get("status") == 401 and over.get("error", {}).get("code") == "wrong_claims", over)
+
+    d.step("6c. Crash, and no issuer to ask", "Mumbai dies while the issuer and Pune's sidecar are down too: the SAME "
+                                                "session, claim included, keeps working at Pune.")
+    tok = d.login(dev, "mum", "--claim", "age_over_18")["token"]
+    rid = "R-" + secrets.token_hex(4)
+    r = d.cart(tok, title="before crash", op_id="demo-c3-1", report_id=rid)
+    ev_id = r.json().get("event_id") if r.status_code == 201 else None
+    check("written at Mumbai and copied to Pune", bool(ev_id and until(lambda: d.has_event("pun", ev_id), timeout=10)))
+    d.kill_region("mum")
+    d.stack.stop("issuer")
+    d.stack.stop("auth-pun")
+    say("   Mumbai killed, issuer stopped, Pune's auth sidecar stopped.")
+    r = C.post(d.url["pun"] + f"/v1/reports/{rid}/notes", json={"text": "after crash", "op_id": "demo-c3-2"},
+               headers=bearer(tok))
+    check("same token writes at Pune with no new sign-in and no issuer -> 201", r.status_code == 201, code(r))
+    who = C.get(d.url["pun"] + "/v1/auth/me", headers=bearer(tok)).json()
+    check("and the proven claim came along: claims=['age_over_18']", who.get("claims") == ["age_over_18"], who)
+    check("(a NEW sign-in at Pune is impossible right now, so nothing was re-issued)",
+          not d.login(dev, "pun").get("ok"))
+    d.stack.start_issuer()
+    d.stack.start_sidecar("pun")
+    d.start_region("mum")
+    same = until(lambda: C.get(d.url["mum"] + "/v1/status").json()["event_digest"]
+                 == C.get(d.url["pun"] + "/v1/status").json()["event_digest"], timeout=15)
+    check("everything restarted and both regions hold identical events", bool(same))
 
     d.step("7. Issuer outage", "The issuer goes down; regions keep working from the last signed status.")
     d.stack.stop("issuer")

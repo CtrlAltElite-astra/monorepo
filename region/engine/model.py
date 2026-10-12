@@ -48,11 +48,12 @@ class Replica:
         return digest.state_hash(self.views())
 
     def write(self, now_ms: int, type_: str, report_id: str, field=None, value=None, op_id=None,
-              reason=None, bulk=False) -> dict:
+              reason=None, bulk=False, credential_id=None) -> dict:
         """A local write: one new event, built the way the write path builds it.
 
         An op_id this node already holds (applied here, or arrived from a peer) is not written
-        again: the existing event is returned.
+        again: the existing event is returned. credential_id: the signed-in credential that
+        authorised the write (auth mode records it on the event); None in API-key mode.
         """
         if op_id:
             for e in self.events.values():
@@ -66,24 +67,26 @@ class Replica:
         self.seq += 1
         self.clock = hlc.tick(self.clock, now_ms)
         signer = (lambda h: signing.sign_with(self.private_key, h)) if self.private_key else None
+        extra = {"credential_id": credential_id} if credential_id else {}
         ev = envelope.new_event(
             self.region, self.seq, self.clock, type_, report_id, field, value, before, op_id=op_id,
             reason=reason, bulk=bulk, signer=signer,
-            wall=datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc).isoformat(timespec="seconds"))
+            wall=datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc).isoformat(timespec="seconds"), **extra)
         self.events[ev["event_id"]] = ev
         return ev
 
-    def receive(self, events, now_ms: int, public_keys=None) -> list:
+    def receive(self, events, now_ms: int, public_keys=None, is_revoked=admit.never_revoked) -> list:
         """Events from a peer or from a browser's outbox, checked the way ingest checks them.
 
         Skipped: a malformed event, a hash that does not match, an id already held. With
         public_keys (the rule for /v1/carry, admit.reject_reason) an event must also carry its
-        origin's signature. Returns the ids that were new.
+        origin's signature, and an event from a credential is_revoked reports is refused.
+        Returns the ids that were new.
         """
         new = []
         for ev in events:
             if public_keys is not None:
-                if admit.reject_reason(ev, public_keys) or ev["event_id"] in self.events:
+                if admit.reject_reason(ev, public_keys, is_revoked=is_revoked) or ev["event_id"] in self.events:
                     continue
             elif not well_formed(ev) or ev["event_id"] in self.events or canonical.event_hash(ev) != ev.get("hash"):
                 continue

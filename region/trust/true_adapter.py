@@ -39,7 +39,8 @@ class TrueSessionAdapter(TrustAdapter):
         purpose = "privileged" if action in PRIVILEGED_ACTIONS else "write"
         d = evaluate(snap.statuses if snap else None, snap.issued_at if snap else None,
                      s.credential_id, int(self.clock()), purpose)
-        base = dict(actor=s.actor_id, role=s.role, region_scope=config.settings.region, credential_id=s.credential_id)
+        base = dict(actor=s.actor_id, role=s.role, region_scope=config.settings.region, credential_id=s.credential_id,
+                    claims=s.claims)
         if not d.allow:
             return AuthDecision(False, reason=d.reason, **base), s, d
         ver = str(snap.ver) if snap else None

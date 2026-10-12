@@ -1,27 +1,32 @@
-"""Load Generator & Benchmark Script (Simrit / Lane D).
+"""Load generator (Simrit / Lane D): shop-style writes, measured honestly.
 
-Generates synthetic writes across regions, measuring offered vs accepted rates,
-commit latency percentiles (p50, p95), and sync lag.
-Used for Trial & Reward curveball validation (PDF 2 Section 17).
+Reports offered, accepted and refused writes, throughput and commit latency (p50, p95). Everything it prints
+comes from the responses it actually got.
+
+Examples
+    python scripts/loadgen.py --url http://127.0.0.1:8001 -n 300 -c 16          # one region, 16 at a time
+    python scripts/loadgen.py --actor Bob -n 40                                  # spam as Bob (key dev-bob)
+    python scripts/loadgen.py --spread mum,pun,del -n 300 -c 12                  # split across regions
+
+Each shopper has a home region (shoppers are dealt to the listed regions in turn), and a cart's notes always go
+to the region that holds the cart, so no write ever depends on replication having finished.
 """
-import argparse
-import statistics
-import time
-import httpx
-
-KEY = {"X-API-Key": "dev-officer"}
-
-
 import argparse
 import json
 import random
 import statistics
+import sys
+import threading
 import time
 import uuid
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import httpx
 
-KEY = {"X-API-Key": "dev-officer"}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from run_one import PORTS  # noqa: E402
 
 SHOPPERS = ["Alice", "Bob", "Chitra", "Dev", "Esha"]
 
@@ -39,93 +44,139 @@ PRODUCTS = [
 ]
 
 
-def run_benchmark(target_url: str, total_writes: int, concur: int = 1, shop_mode: bool = True):
-    print(f"Running benchmark: {total_writes} writes on {target_url} (shop_mode={shop_mode}, concurrency={concur})...")
-    latencies = []
-    accepted = 0
-    rejected = 0
+def shopper_key(name: str) -> str:
+    """The API key of a shopper. scripts/run_one.py gives every shopper one (dev-alice, dev-bob, ...)."""
+    return f"dev-{name.lower()}"
 
-    client = httpx.Client(timeout=10.0)
-    start_time = time.time()
 
-    active_carts = []
+def percentile(sorted_values: list, q: float) -> float:
+    return sorted_values[min(int(len(sorted_values) * q), len(sorted_values) - 1)]
 
-    for i in range(total_writes):
+
+class Run:
+    def __init__(self, urls: dict, shoppers: list, key_for, shop: bool):
+        self.urls = urls                    # region -> base url
+        self.shoppers = shoppers
+        self.key_for = key_for
+        self.shop = shop
+        regions = list(urls)
+        self.home = {s: regions[i % len(regions)] for i, s in enumerate(shoppers)}
+        self.carts = {s: [] for s in shoppers}   # shopper -> cart ids at the shopper's home region
+        self.lock = threading.Lock()
+        self.latencies = []
+        self.codes = Counter()
+        self.per_region = Counter()
+        self.limited = None                       # first refusal body, for the report
+        self.local = threading.local()            # one HTTP client per worker thread (building one costs ~300 ms)
+
+    def one(self, i: int) -> None:
+        shopper = self.shoppers[i % len(self.shoppers)]
+        region = self.home[shopper]
+        base = self.urls[region]
+        headers = {"X-API-Key": self.key_for(shopper)}
         op_id = str(uuid.uuid4())
-        shopper = random.choice(SHOPPERS)
+        with self.lock:
+            cart = random.choice(self.carts[shopper]) if self.carts[shopper] and random.random() < 0.6 else None
         t0 = time.time()
         try:
-            if shop_mode and active_carts and random.random() < 0.6:
-                # Add item NOTE to existing cart
-                cart_id = random.choice(active_carts)
+            c = getattr(self.local, "client", None)
+            if c is None:
+                c = self.local.client = httpx.Client(timeout=10.0)
+            if self.shop and cart:
                 prod = random.choice(PRODUCTS)
-                note_payload = {
-                    "kind": "ADD",
-                    "sku": prod["sku"],
-                    "name": prod["name"],
-                    "qty": 1,
-                    "price": prod["price"],
-                    "user": shopper,
-                }
-                r = client.post(
-                    f"{target_url}/v1/reports/{cart_id}/notes",
-                    json={"text": json.dumps(note_payload), "op_id": op_id},
-                    headers=KEY,
-                )
+                note = {"kind": "ADD", "sku": prod["sku"], "name": prod["name"], "qty": 1,
+                        "price": prod["price"], "user": shopper}
+                r = c.post(f"{base}/v1/reports/{cart}/notes", json={"text": json.dumps(note), "op_id": op_id},
+                           headers=headers)
             else:
-                # Create a new cart / incident report
-                payload = {
-                    "title": f"{shopper}'s Cart {i}",
-                    "category": "shelter",
-                    "severity": random.choice([1, 2, 3, 4, 5]),
-                    "description": f"Cart for {shopper}",
-                    "op_id": op_id,
-                }
-                r = client.post(f"{target_url}/v1/reports", json=payload, headers=KEY)
+                payload = {"title": shopper, "category": "cart", "severity": random.choice([1, 2, 3]),
+                           "description": f"Cart {i}", "op_id": op_id}
+                r = c.post(f"{base}/v1/reports", json=payload, headers=headers)
                 if r.status_code == 201:
-                    rid = r.json().get("report", {}).get("report_id")
+                    rid = (r.json().get("report") or {}).get("report_id")
                     if rid:
-                        active_carts.append(rid)
-
-            t_req = (time.time() - t0) * 1000
-            if r.status_code in (200, 201):
-                accepted += 1
-                latencies.append(t_req)
-            else:
-                rejected += 1
-        except Exception:
-            rejected += 1
-
-    total_time = time.time() - start_time
-    throughput = total_writes / total_time if total_time > 0 else 0
-
-    print("\n=== Benchmark Results ===")
-    print(f"Total Offered:   {total_writes}")
-    print(f"Accepted (2xx):  {accepted}")
-    print(f"Rejected / Err:  {rejected}")
-    print(f"Duration:        {round(total_time, 2)} s")
-    print(f"Throughput:      {round(throughput, 1)} req/s")
-
-    if latencies:
-        p50 = statistics.median(latencies)
-        latencies.sort()
-        idx95 = int(len(latencies) * 0.95)
-        p95 = latencies[min(idx95, len(latencies) - 1)]
-        print(f"Latency p50:     {round(p50, 1)} ms")
-        print(f"Latency p95:     {round(p95, 1)} ms")
-        print(f"Latency Min/Max: {round(min(latencies), 1)} ms / {round(max(latencies), 1)} ms")
+                        with self.lock:
+                            self.carts[shopper].append(rid)
+            ms = (time.time() - t0) * 1000
+            with self.lock:
+                self.codes[r.status_code] += 1
+                self.per_region[region] += 1
+                if r.status_code in (200, 201):
+                    self.latencies.append(ms)
+                elif self.limited is None and r.status_code in (429, 503):
+                    self.limited = {"status": r.status_code, "body": r.text[:120],
+                                    "retry_after": r.headers.get("retry-after")}
+        except httpx.HTTPError as exc:
+            with self.lock:
+                self.codes[type(exc).__name__] += 1
 
 
-def main():
-    parser = argparse.ArgumentParser(description="SyncShield loadgen benchmark")
-    parser.add_argument("--url", default="http://127.0.0.1:8001")
-    parser.add_argument("-n", "--count", type=int, default=50)
-    parser.add_argument("-c", "--concurrency", type=int, default=1)
-    parser.add_argument("--shop", action="store_true", default=True, help="Use shop domain payload")
-    args = parser.parse_args()
-    run_benchmark(args.url, args.count, concur=args.concurrency, shop_mode=args.shop)
+def run_benchmark(urls: dict, total: int, concurrency: int, shoppers: list, key_for, shop: bool = True) -> dict:
+    where = ", ".join(f"{r} {u}" for r, u in urls.items())
+    print(f"Running {total} writes, {concurrency} at a time, as {', '.join(shoppers)} on {where} ...")
+    run = Run(urls, shoppers, key_for, shop)
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        list(pool.map(run.one, range(total)))
+    secs = time.time() - t0
+
+    accepted = run.codes[200] + run.codes[201]
+    refused = run.codes[429] + run.codes[503]
+    other = sum(n for c, n in run.codes.items() if c not in (200, 201, 429, 503))
+    lat = sorted(run.latencies)
+    result = {"offered": total, "accepted": accepted, "refused": refused, "errors": other,
+              "seconds": round(secs, 2), "writes_per_s": round(accepted / secs, 1) if secs > 0 else 0,
+              "p50_ms": round(statistics.median(lat), 1) if lat else None,
+              "p95_ms": round(percentile(lat, 0.95), 1) if lat else None,
+              "by_status": {str(k): v for k, v in sorted(run.codes.items(), key=lambda kv: str(kv[0]))},
+              "by_region": dict(run.per_region), "first_refusal": run.limited}
+    print("\n=== Results ===")
+    print(f"Offered:     {result['offered']}")
+    print(f"Accepted:    {accepted}")
+    print(f"Refused:     {refused}   (429 rate limit / 503 overloaded)")
+    print(f"Errors:      {other}")
+    print(f"Duration:    {result['seconds']} s")
+    print(f"Throughput:  {result['writes_per_s']} accepted writes/s")
+    if lat:
+        print(f"Latency:     p50 {result['p50_ms']} ms, p95 {result['p95_ms']} ms (accepted writes only)")
+    print(f"By status:   {result['by_status']}")
+    if len(urls) > 1:
+        print(f"By region:   {result['by_region']}")
+    if run.limited:
+        print(f"First refusal: {run.limited}")
+    return result
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="SyncShield load generator")
+    ap.add_argument("--url", default="http://127.0.0.1:8001", help="one region (ignored with --spread)")
+    ap.add_argument("--spread", help="comma list of regions to split the shoppers across, e.g. mum,pun,del")
+    ap.add_argument("--actor", help="send everything as this one shopper (e.g. Bob): spam as Bob")
+    ap.add_argument("--key", help="API key to use for every request (default: dev-officer, or dev-<actor> with --actor)")
+    ap.add_argument("-n", "--count", type=int, default=50)
+    ap.add_argument("-c", "--concurrency", type=int, default=1)
+    ap.add_argument("--json", action="store_true", help="print the result as JSON only")
+    args = ap.parse_args()
+
+    if args.spread:
+        regions = [r.strip() for r in args.spread.split(",") if r.strip()]
+        bad = [r for r in regions if r not in PORTS]
+        if bad:
+            sys.exit(f"unknown region(s): {', '.join(bad)} (known: {', '.join(PORTS)})")
+        urls = {r: f"http://127.0.0.1:{PORTS[r]}" for r in regions}
+    else:
+        urls = {"url": args.url.rstrip("/")}
+    shoppers = [args.actor] if args.actor else SHOPPERS
+    if args.key:
+        key_for = lambda _s: args.key                    # noqa: E731
+    elif args.actor:
+        key_for = shopper_key                            # as Bob: key dev-bob, so a per-shopper limit sees one actor
+    else:
+        key_for = lambda _s: "dev-officer"               # noqa: E731  (works on every region started by hand)
+    result = run_benchmark(urls, args.count, args.concurrency, shoppers, key_for)
+    if args.json:
+        print(json.dumps(result))
 
 
 if __name__ == "__main__":
     main()
-

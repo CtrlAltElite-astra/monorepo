@@ -1,0 +1,29 @@
+/* Identity panel (lane C). Uses the console's tokens, with fallbacks so the panel also renders on its own. */
+.idp { padding: 14px 16px 12px; display: grid; gap: 12px; }
+.idp__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.idp__head h3 { font-size: 0.925rem; }
+.idp__actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.idp__ask { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; }
+.idp__ask select {
+  padding: 5px 8px; border-radius: var(--r-sm, 7px); border: 1px solid var(--border-strong, #d8d9d2);
+  background: var(--surface, #fff); font-size: 0.8rem;
+}
+.idp__revoke { margin-left: auto; }
+.idp__cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.idp__col { border: 1px solid var(--border, #e7e7e3); border-radius: var(--r-sm, 7px); padding: 10px 12px; background: var(--surface-2, #f7f7f5); min-width: 0; }
+.idp__col h4 { margin-bottom: 8px; color: var(--text-2, #51544f); text-transform: uppercase; letter-spacing: .04em; font-size: 0.72rem; }
+.idp__list { display: grid; gap: 4px; }
+.idp__list li {
+  display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; font-size: 0.8rem;
+  padding: 4px 6px; border-radius: 5px; color: var(--muted, #858781);
+}
+.idp__list li.is-shared, .idp__list li.is-proven { color: var(--text, #202221); background: var(--surface, #fff); }
+.idp__list li.is-proven .idp__tag { color: var(--ok, #468353); background: var(--ok-bg, #edf5ec); }
+.idp__list li.is-unproven .idp__tag { color: var(--warn, #a47b30); background: var(--warn-bg, #faf3e3); }
+.idp__tag { font-size: 0.68rem; padding: 1px 6px; border-radius: 999px; background: var(--muted-bg, #f1f2ee); white-space: nowrap; }
+.idp__foot { margin-top: 8px; font-size: 0.72rem; }
+.idp__note { font-size: 0.78rem; }
+@media (max-width: 640px) {
+  .idp__cols { grid-template-columns: 1fr; }
+  .idp__revoke { margin-left: 0; }
+}

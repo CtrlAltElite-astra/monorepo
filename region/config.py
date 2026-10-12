@@ -35,6 +35,10 @@ def _parse_keys(raw: str) -> dict:
     return keys
 
 
+# writes saved per batch (transaction) for each power preset
+POWER_BATCH = {"low": 1, "medium": 8, "high": 32}
+
+
 @dataclass(frozen=True)
 class Settings:
     region: str
@@ -60,6 +64,11 @@ class Settings:
     carry_enabled: bool = True
     write_queue_max: int = 100
     link_slow_bps: int = 10000
+    # --- scaling, rate limiting (contract v1.2). Everything here is OFF / today's behaviour by default. ---
+    rate_actor_burst: int = 0          # per-shopper token bucket, 0 = off (read by region/api/ratelimit.py)
+    rate_actor_refill_per_s: float = 1.0
+    region_write_limit_per_s: int = 0  # whole-region write limit, 0 = off (region/sync/scale.py)
+    power: str = "medium"              # low | medium | high: writes saved per transaction (1 / 8 / 32)
 
 
 def load() -> Settings:
@@ -89,6 +98,10 @@ def load() -> Settings:
         carry_enabled=env("ENABLE_CARRY", "1") == "1",
         write_queue_max=int(env("WRITE_QUEUE_MAX", "100")),
         link_slow_bps=int(env("LINK_SLOW_BPS", "10000")),
+        rate_actor_burst=int(env("RATE_ACTOR_BURST", "0")),
+        rate_actor_refill_per_s=float(env("RATE_ACTOR_REFILL_PER_S", "1")),
+        region_write_limit_per_s=int(env("REGION_WRITE_LIMIT_PER_S", "0")),
+        power=env("POWER", "medium").strip().lower() if env("POWER", "medium").strip().lower() in POWER_BATCH else "medium",
     )
 
 
@@ -103,3 +116,46 @@ def add_peer(name: str, url: str) -> None:
     new_peers[name] = url.rstrip("/")
     settings = dataclasses.replace(settings, peers=new_peers)
 
+
+
+# Settings that POST /admin/config may change at runtime, with their validators (contract v1.2, section 3.1).
+RUNTIME_KEYS = ("rate_actor_burst", "rate_actor_refill_per_s", "region_write_limit_per_s", "power")
+
+
+def _whole(v, name: str) -> int:
+    if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+        raise ValueError(f"{name} must be a whole number, 0 or more")
+    return v
+
+
+def validate_runtime(changes: dict) -> dict:
+    """Return the cleaned changes, or raise ValueError naming the first problem. Unknown keys are an error."""
+    unknown = sorted(set(changes) - set(RUNTIME_KEYS))
+    if unknown:
+        raise ValueError(f"unknown setting(s): {', '.join(unknown)}")
+    out = {}
+    for k, v in changes.items():
+        if k == "power":
+            if v not in POWER_BATCH:
+                raise ValueError("power must be one of: low, medium, high")
+            out[k] = v
+        elif k == "rate_actor_refill_per_s":
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+                raise ValueError("rate_actor_refill_per_s must be a number, 0 or more")
+            out[k] = float(v)
+        else:
+            out[k] = _whole(v, k)
+    return out
+
+
+def update_runtime(changes: dict) -> None:
+    """Apply already validated runtime changes (the frozen Settings object is replaced, never mutated)."""
+    global settings
+    import dataclasses
+    settings = dataclasses.replace(settings, **changes)
+
+
+def runtime_values() -> dict:
+    s = settings
+    return {"rate_actor_burst": s.rate_actor_burst, "rate_actor_refill_per_s": s.rate_actor_refill_per_s,
+            "region_write_limit_per_s": s.region_write_limit_per_s, "power": s.power}

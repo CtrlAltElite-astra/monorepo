@@ -43,5 +43,18 @@
     "new": 3,
     "dup": 0,
     "rejected": 0
+  },
+  "load": {
+    "writes_per_s": 3.2,
+    "power": "medium",
+    "batch": 8,
+    "queue_depth": 0
+  },
+  "rate": {
+    "actor_burst": 10,
+    "actor_refill_per_s": 1,
+    "region_limit_per_s": 0,
+    "refused_actor": 0,
+    "refused_region": 0
   }
 }

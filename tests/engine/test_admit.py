@@ -104,4 +104,5 @@ def test_rejected_events_change_nothing_and_a_duplicate_is_one_event():
 
 
 def test_every_reason_is_one_the_contract_names():
-    assert admit.REASONS == ("shape", "unknown_origin", "bad_hash", "bad_sig")  # contract 5.3, /v1/carry results
+    assert admit.REASONS == ("shape", "unknown_origin", "bad_hash", "bad_sig",  # contract 5.3, /v1/carry results
+                             "revoked_credential")                              # scaling plan 3.5

@@ -64,6 +64,10 @@ class Wallet:
             extra += [f"--{k}", str(v)]
         return self._run("login", "--region", region_url, *extra)
 
+    def holds(self):
+        """Every attribute in the wallet's credential (what the shopper holds; read without verifying)."""
+        return self._run("holds")
+
     def present(self, nonce, audience, **flags):
         extra = []
         for k, v in flags.items():

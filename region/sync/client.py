@@ -73,22 +73,30 @@ async def pull_once(client: httpx.AsyncClient, peer: str, base_url: str) -> None
 
 
 async def run_forever() -> None:
-    peers = config.settings.peers
-    if not peers:
-        return
+    """Pull from every peer each round. The peer list is read every round, so a peer added at runtime
+    (POST /admin/config, used when a region joins) is synced from its next round on, with its own push worker."""
     interval = config.settings.sync_interval_ms / 1000
-    # Launch push workers in parallel for each peer if push is enabled
-    push_tasks = []
-    if config.settings.push_enabled:
-        push_tasks = [asyncio.create_task(push.push_worker(p, url)) for p, url in peers.items()]
+    push_tasks = {}   # peer -> push worker task
+
+    def ensure_push_workers(peers: dict) -> None:
+        if not config.settings.push_enabled:
+            return
+        for p, url in peers.items():
+            task = push_tasks.get(p)
+            if task is None or task.done():
+                push_tasks[p] = asyncio.create_task(push.push_worker(p, url))
+
     try:
         async with httpx.AsyncClient(timeout=config.settings.http_timeout_s) as client:
             while True:
+                peers = dict(config.settings.peers)
+                ensure_push_workers(peers)
                 try:
-                    await asyncio.gather(*(pull_once(client, p, url) for p, url in peers.items()))
+                    if peers:
+                        await asyncio.gather(*(pull_once(client, p, url) for p, url in peers.items()))
                 except Exception:
                     log.exception("pull round failed")
                 await asyncio.sleep(interval)
     finally:
-        for t in push_tasks:
+        for t in push_tasks.values():
             t.cancel()

@@ -3,8 +3,10 @@
 Three in-memory nodes (region.engine.model.Replica: the real engine and write
 rule, every event signed). Hypothesis makes random writes, retries of earlier
 writes under the same op_id, supervisor decisions, partial deliveries in any
-order with duplicates, tampered deliveries, and clocks that jump backwards. At
-the end every node gets everything and all three must agree byte for byte.
+order with duplicates, tampered deliveries, clocks that jump backwards, and a
+shopper whose credential was revoked who keeps sending (a fourth region that has
+not heard of the revocation signs those writes; every replica must refuse them).
+At the end every node gets everything and all three must agree byte for byte.
 
     pytest tests/fuzz -q                                    200 examples, the same ones every run
     FUZZ_EXAMPLES=2000 FUZZ_RANDOM=1 pytest tests/fuzz -q   a longer run with fresh random cases
@@ -22,7 +24,7 @@ from hypothesis.stateful import (RuleBasedStateMachine, initialize, invariant, p
                                  run_state_machine_as_test)
 
 from contracts.schemas import CATEGORIES, STATUSES
-from region.engine import canonical, signing
+from region.engine import admit, canonical, signing
 from region.engine.derive import derive
 from region.engine.model import Replica
 from region.engine.derive import POLICY_VERSION
@@ -35,6 +37,11 @@ RESULT = Path(__file__).with_name("last_result.json")
 REGIONS = ("mum", "pun", "del")
 KEYS = {r: signing.generate() for r in REGIONS}  # (private, public) per node
 PUBLIC = {r: public for r, (_, public) in KEYS.items()}
+STALE = "blr"                    # Bengaluru: still signs writes from a credential revoked elsewhere
+STALE_KEY = signing.generate()
+PUBLIC[STALE] = STALE_KEY[1]     # a known region, so its events pass every check but revocation
+REVOKED = "cred-revoked-esha"
+IS_REVOKED = {REVOKED}.__contains__  # every replica knows the revocation
 STATS = Counter()
 CLOCK = st.integers(0, 40)  # tiny and unordered: wall clocks jump back and timestamps tie across nodes
 
@@ -64,6 +71,8 @@ class Shop(RuleBasedStateMachine):
         self.acked = {}  # every event a node has acknowledged
         self.carts = 0
         self.last_clock = {r: (0, 0) for r in REGIONS}
+        self.stale = Replica(STALE, STALE_KEY[0])  # not a replica: only a source of revoked writes
+        self.revoked = set()                       # ids of every event written for the revoked credential
 
     def _write(self, region, now, type_, rid, field=None, value=None, reason=None, op=None):
         node = self.nodes[region]
@@ -99,7 +108,7 @@ class Shop(RuleBasedStateMachine):
         """Start with one replicated cart, so two nodes can disagree about it from the first step."""
         self.new_cart(region=region, now=now, owner="Alice", speed=1)
         for other in REGIONS:
-            self.nodes[other].receive(list(self.nodes[region].events.values()), now, PUBLIC)
+            self.nodes[other].receive(list(self.nodes[region].events.values()), now, PUBLIC, IS_REVOKED)
 
     @precondition(lambda self: self.carts < 3)
     @rule(region=st.sampled_from(REGIONS), now=CLOCK, owner=st.sampled_from(["Alice", "Bob"]), speed=st.integers(1, 5))
@@ -154,14 +163,14 @@ class Shop(RuleBasedStateMachine):
         held = sorted(self.nodes[src].events)
         if src != dst and held:
             ids = data.draw(st.lists(st.sampled_from(held), max_size=10))
-            self.nodes[dst].receive([self.nodes[src].events[i] for i in ids], now, PUBLIC)
+            self.nodes[dst].receive([self.nodes[src].events[i] for i in ids], now, PUBLIC, IS_REVOKED)
             STATS["deliveries"] += 1
 
     @rule(src=st.sampled_from(REGIONS), dst=st.sampled_from(REGIONS), now=CLOCK)
     def sync(self, src, dst, now):
         """One node pulls everything another holds."""
         if src != dst and self.nodes[src].events:
-            self.nodes[dst].receive(list(self.nodes[src].events.values()), now, PUBLIC)
+            self.nodes[dst].receive(list(self.nodes[src].events.values()), now, PUBLIC, IS_REVOKED)
             STATS["full_syncs"] += 1
 
     @rule(data=st.data(), src=st.sampled_from(REGIONS), dst=st.sampled_from(REGIONS), now=CLOCK,
@@ -177,8 +186,26 @@ class Shop(RuleBasedStateMachine):
                 forger = next(r for r in REGIONS if r != original["origin"])
                 bad["sig"] = signing.sign_with(KEYS[forger][0], bad["hash"])
             before = self.nodes[dst].event_digest()
-            assert self.nodes[dst].receive([bad], now, PUBLIC) == [] and self.nodes[dst].event_digest() == before
+            assert self.nodes[dst].receive([bad], now, PUBLIC, IS_REVOKED) == [] and self.nodes[dst].event_digest() == before
             STATS["tampered_rejected"] += 1
+
+    @precondition(lambda self: self.carts)
+    @rule(data=st.data(), src=st.sampled_from(REGIONS), dst=st.sampled_from(REGIONS), now=CLOCK,
+          item=st.sampled_from(ITEMS))
+    def revoked_actor_keeps_sending(self, data, src, dst, now, item):
+        """Bengaluru learns a cart, accepts an add from the revoked credential and signs it; a replica refuses it."""
+        self.stale.receive(list(self.nodes[src].events.values()), now, PUBLIC)  # Bengaluru does not know
+        carts = sorted({e["report_id"] for e in self.stale.events.values()})
+        if not carts:
+            return
+        ev = self.stale.write(now, "NOTE", data.draw(st.sampled_from(carts)), value={"text": item},
+                              credential_id=REVOKED)
+        self.revoked.add(ev["event_id"])
+        assert admit.reject_reason(ev, PUBLIC, is_revoked=IS_REVOKED) == "revoked_credential"
+        before = self.nodes[dst].event_digest()
+        assert self.nodes[dst].receive([ev], now, PUBLIC, IS_REVOKED) == []
+        assert self.nodes[dst].event_digest() == before
+        STATS["revoked_rejected"] += 1
 
     # ---- what must hold after every step ----------------------------------
     @invariant()
@@ -212,7 +239,12 @@ class Shop(RuleBasedStateMachine):
         everything = list(union.values())
         orders = (everything, everything[::-1], sorted(everything, key=lambda e: e["hash"]))
         for node, events in zip(self.nodes.values(), orders):
-            node.receive(events + events[:3], 99, PUBLIC)  # a different order per node, some events twice
+            node.receive(events + events[:3], 99, PUBLIC, IS_REVOKED)  # a different order per node, some events twice
+        from_bengaluru = list(self.stale.events.values())  # its revoked writes, and its copies of everything else
+        for node in self.nodes.values():
+            node.receive(from_bengaluru, 99, PUBLIC, IS_REVOKED)
+            assert not set(node.events) & self.revoked  # none of the revoked writes is stored anywhere
+        assert all(e.get("credential_id") != REVOKED for node in self.nodes.values() for e in node.events.values())
         a, b, c = self.nodes.values()
         assert set(a.events) == set(b.events) == set(c.events) >= set(self.acked)  # nothing acknowledged is missing
         assert a.event_digest() == b.event_digest() == c.event_digest()
@@ -222,7 +254,7 @@ class Shop(RuleBasedStateMachine):
             adds = {e["op_id"] for e in a.of(rid) if e["type"] == "NOTE"}
             assert len(view["state"]["notes"]) == len(adds)  # a retried add is still one item
             assert view["incomplete"] is False
-        assert a.receive(everything, 100, PUBLIC) == []  # delivering it all again changes nothing
+        assert a.receive(everything, 100, PUBLIC, IS_REVOKED) == []  # delivering it all again changes nothing
         STATS["examples"] += 1
         STATS["events"] += len(union)
 
@@ -244,6 +276,7 @@ def test_f1_three_nodes_always_converge():
         "partial_deliveries": STATS["deliveries"],
         "full_syncs": STATS["full_syncs"],
         "tampered_deliveries_rejected": STATS["tampered_rejected"],
+        "revoked_credential_events_rejected": STATS["revoked_rejected"],
         "events_compared_at_the_end": STATS["events"],
         "cases": "fresh random" if RANDOM else "fixed (same every run)",
         "policy_version": POLICY_VERSION,

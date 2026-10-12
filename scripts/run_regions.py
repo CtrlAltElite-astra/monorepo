@@ -1,4 +1,4 @@
-"""Start all regions, one process each.   python scripts/run_regions.py [mum pun]
+"""Start all regions, one process each.   python scripts/run_regions.py [mum pun del blr]
 
 Ctrl+C stops them all. Data lives in data/<region>.db and survives restarts.
 """

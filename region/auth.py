@@ -20,7 +20,8 @@ from region.trust import adapter
 
 # Lane A's field order is kept (mode stays third); credential_id is appended and is None in base mode
 # (an API key has no credential record). mode: online | cached | stale (event.auth_mode)
-Auth = namedtuple("Auth", "actor role mode credential_id", defaults=("online", None))
+# claims: attributes PROVEN in the verified session (contract v1.2 3.5; read them through region.trust.claims).
+Auth = namedtuple("Auth", "actor role mode credential_id claims", defaults=("online", None, ()))
 
 _UNAVAILABLE = ("no_status", "status_too_old", "status_stale_for_purpose")
 
@@ -48,7 +49,7 @@ def _authenticate(x_api_key, authorization, action):
         d = adapter.get_adapter().verify_actor(_bearer(authorization), action)   # X-API-Key deliberately ignored
         if not d.allowed:
             raise _fail(d)
-        return Auth(d.actor, d.role, d.mode, d.credential_id)
+        return Auth(d.actor, d.role, d.mode, d.credential_id, tuple(d.claims))
     d = adapter.get_adapter().verify_actor(x_api_key, action)
     if d.allowed:
         return Auth(d.actor, d.role, d.mode, d.credential_id)
