@@ -61,10 +61,18 @@ Legend: [x] done and tested · [~] partly · [ ] not started · [D]/[B]/[C] wait
 - [x] Tests T7, T10, T16 (A part), A9, 403/409/422 paths: `tests/api/` (see section 5)
 - [ ] Partner HTTP adapter with cache and fallback + T13 (tier 2-c; interface, contract and mock already exist)
 - [ ] README API samples (`docs/api.md`)
-### Frontend (`web/`)
-- [ ] Foundation (Vite + React + TypeScript, themes), simulator, SDK, shop adapter, Landing, Demo, panels
-- [ ] Mock mode acceptance A1–A12, live mode against real nodes, light and dark themes, animations
-- [ ] Hand-off notes for Miti, `scripts/run_web.*`, `.env.example` keys, remove `dashboard/` (separate commit)
+### Frontend (`web/`) — built, light + dark themes, animated
+- [x] Vite + React + TypeScript project, story page `/` (animated mesh, claims, 8-step failover walkthrough, four ideas, rules, limits)
+- [x] Console `/demo`: storefront, 3 node cards with the degradation ladder, request dots, 4 counters, data-at-risk meter,
+      tabs Carts / Network / Review / Outbox / Security / Metrics / API / Prove it, history drawer, resolve dialog, heal banner, toasts
+- [x] Browser SDK (probes, same-op_id retries, carry before first request on a new node, outbox pruning, failback, device queue)
+- [x] Mock mode = in-browser simulator of 3 nodes behind the SAME REST paths as the real nodes; live mode = fetch (`?mode=live`)
+- [x] Tests: 56 (derive policy v1, op_id groups, close-vs-new-info, convergence, tamper, ladder, zero-loss failover T17/T20, outbox T19)
+- [x] Verified in a real browser (mock): A1 add + replicate, A2 kill a node under auto-shoppers = 0 errors and "acknowledged = present on survivors",
+      A3 restart -> RECOVERING -> HEALTHY -> CONVERGED, UNKNOWN (never green) while a node is down, partition button
+- [x] Verified in a real browser (LIVE, real nodes :8001-8003): 3 nodes HEALTHY, add-to-cart saved + replicated, API view
+- [ ] NOT yet exercised in a browser (logic is unit-tested): resolve dialog + 409/403, tamper button, Prove it, Burst, join Delhi live, dark-theme pass on every panel, phone layout review
+- [ ] Hand-off to Miti, `scripts/run_web.*`, `.env.example` keys, README link, CI step, remove `dashboard/` (do as a SEPARATE final commit)
 ### Waiting on other lanes
 - [B] `engine/signing.py` (my `trust/signing.py` is the seam; B may delegate or replace its body), `policy v1`, `op_id` group rule in `derive`, `CLOSE_VS_NEW_INFO`, `priority.classify`
 - [D] `GET /healthz`, `POST /v1/carry`, `POST /v1/events/has`, ingest that fails closed on unsigned events, levels CONSTRAINED/RECOVERING, queues/carry in the snapshot
@@ -86,6 +94,25 @@ Test status at the last update: see the progress log. Lane A files: `test_report
 `test_trust_and_infra.py`, `test_status_api.py`, `test_store.py`, `test_roles.py`, `test_contracts.py`,
 `test_crash_recovery.py` (real process, kill -9). One strict `xfail` documents that Lane D's ingest still accepts
 unsigned foreign events; remove it when ingest fails closed.
+
+### Running links (as left on 2026-10-12)
+
+| what | URL |
+|---|---|
+| Story page | http://localhost:5173/ |
+| Console, mock (simulator, no backend needed) | http://localhost:5173/demo |
+| Console, LIVE against the real nodes | http://localhost:5173/demo?mode=live |
+| Console, start with 2 nodes (join Delhi live) | http://localhost:5173/demo?nodes=2 |
+| Mumbai API + docs | http://127.0.0.1:8001/docs · /v1/status |
+| Pune API + docs | http://127.0.0.1:8002/docs |
+| Delhi API + docs | http://127.0.0.1:8003/docs |
+
+Start them: `.\.venv\Scripts\python.exe scripts/run_regions.py mum pun del` (backend) and `cd web; npm install; npm run dev` (frontend).
+Dev keys: `dev-officer` is the only key `run_one.py` provisions (see section 7).
+
+**Live mode today:** the SDK falls back to `/v1/health` because `/healthz` is Lane D's. Until Lane D adds `/healthz`, `/v1/carry`,
+`/v1/events/has` (and the chaos agent on :9000), live mode shows nodes, carts, replication and the API view, but failover,
+"present on survivors", Crash/Restart and Tamper need those endpoints (the UI says so instead of faking it). Mock mode shows all of it.
 
 ## 6. Design decisions worth knowing
 
@@ -124,3 +151,16 @@ unsigned foreign events; remove it when ingest fails closed.
   signing seam, write path v2 (op_id, report ids, signed events, observed, roles), resolve/review/history/status v1.1,
   CORS and body bound, contract v1.1 + changelog + fixtures. Whole repo: 228 passed, 1 xfailed (before the contract-doc
   tests were added); `tests/api`: 195 passed, 1 xfailed. Next: the `web/` frontend.
+- 2026-10-12 (stop point, session limit) — Frontend `web/` built and verified (see section 4). Final checks before this stop:
+  whole repo `pytest tests` = 229 passed, 1 xfailed (intended); web: `tsc` clean, 56 tests, `npm run build` OK; browser scenario in mock
+  mode 13/13 checks; live-mode smoke against the real nodes 7/7 checks. Everything is committed locally on `a/akshit-main`;
+  NOT pushed yet (the user pushes, or asks for the push). After pushing, delete the old remote branches `a/lane-a-basic-build`,
+  `a/phase1-roles-history`, `a/post-merge-notes` (all their commits are contained in `a/akshit-main` or already on `main`).
+
+  **Left to do (Lane A, from the plan):**
+  1. Exercise in a browser: resolve dialog (409 stale, 403 officer = A9), Tamper (A6), Prove it (A8), Burst 300 (A7), join Delhi live (A10), dark pass on every panel, phone layout.
+  2. Frontend hand-off to Miti: `scripts/run_web.*`, `web/.env.example` (VITE_* keys), `web/README.md`, link from the main README, CI `npm run build`, then delete `dashboard/` as a separate commit; plan B if not merged by the deadline: keep `dashboard/`.
+  3. Partner HTTP adapter with cache and fallback (T13, tier 2-c) against Simrit's `scripts/mock_partner.py`; negative tests T10 (done at ingest) and T13.
+  4. README API samples with curl (`docs/api.md`).
+  5. Trial-and-Reward hardening on `main` (oversize input and error bodies are done; write-queue 503 is tier 2-b, needs Lane D's knobs).
+  6. Waiting on others, then re-verify: Lane D `/healthz`, `/v1/carry`, `/v1/events/has`, ingest that fails closed on unsigned events (flip the xfail), levels CONSTRAINED/RECOVERING; Lane B policy v1 + op_id rule + CLOSE_VS_NEW_INFO in the real `derive`; Lane C chaos agent on :9000.
