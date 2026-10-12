@@ -3,6 +3,10 @@
 Write responses (contract v1.1): {"report": <view>, "event": <full signed envelope>, "event_id", "consistency"}.
 A retried write (same op_id, or the Idempotency-Key header) answers 200 with the original event and the header
 `Idempotent-Replay: true`; the same op_id with a different body is 409 op_id_reuse.
+
+Contract v1.2 (8.3): while a per-actor limit is set (region/api/ratelimit.py) every answer to a write that reached
+the write path carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`; an actor with no tokens left gets 429
+`rate_limited` (built in region/main.py). Reads are never limited.
 """
 import re
 from typing import Any, Optional
@@ -13,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from contracts import schemas
 from region import config, store
-from region.api import receipts, writes
+from region.api import ratelimit, receipts, writes
 from region.auth import read_context, require
 from region.engine import canonical
 from region.trust import ownership
@@ -102,23 +106,26 @@ def respond(result: writes.WriteResult, status: int) -> JSONResponse:
     with store.read() as conn:
         report = build_report(conn, ev["report_id"])
     body = {"report": report, "event": ev, "event_id": ev["event_id"], "consistency": report["consistency"]}
+    allowance = ratelimit.headers(result.rate)  # {} while the limit is off
     if result.replay:
-        return JSONResponse(status_code=200, content=body, headers={"Idempotent-Replay": "true"})
-    return JSONResponse(status_code=status, content=body)
+        return JSONResponse(status_code=200, content=body, headers={"Idempotent-Replay": "true", **allowance})
+    return JSONResponse(status_code=status, content=body, headers=allowance)
 
 
 def failure(exc: Exception) -> JSONResponse:
-    """409 / 404 answers shared by every write route."""
+    """409 / 404 answers shared by every write route. A write that was charged a token and then refused for its
+    own reason still reports the caller's allowance."""
+    allowance = ratelimit.headers(getattr(exc, "rate", None))
     if isinstance(exc, writes.NotFound):
-        raise HTTPException(404, "unknown report")
+        raise HTTPException(404, "unknown report", headers=allowance or None)
     if isinstance(exc, writes.StaleEdit):
-        return JSONResponse(status_code=409, content={"error": "stale_edit", "live": exc.live})
+        return JSONResponse(status_code=409, content={"error": "stale_edit", "live": exc.live}, headers=allowance)
     if isinstance(exc, writes.OpIdReuse):
         return JSONResponse(status_code=409, content={"error": "op_id_reuse"})
     if isinstance(exc, writes.ReportExists):
-        return JSONResponse(status_code=409, content={"error": "report_exists"})
+        return JSONResponse(status_code=409, content={"error": "report_exists"}, headers=allowance)
     if isinstance(exc, writes.NoConflict):
-        return JSONResponse(status_code=409, content={"error": "no_conflict"})
+        return JSONResponse(status_code=409, content={"error": "no_conflict"}, headers=allowance)
     raise exc
 
 
@@ -161,7 +168,7 @@ def create_report(body: CreateReport, auth=Depends(require("create")),
     try:
         result = writes.local_write(body.report_id, "CREATE", None, value, auth.actor,
                                     op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode,
-                                    provenance=_prov(auth))
+                                    provenance=_prov(auth), rate_key=ratelimit.key(auth))
     except (writes.OpIdReuse, writes.ReportExists) as exc:
         return failure(exc)
     return respond(result, 201)
@@ -178,7 +185,7 @@ def patch_report(report_id: str, body: PatchReport, auth=Depends(require("set"))
     try:
         result = writes.local_write(report_id, "SET", body.field, value, auth.actor, expected=body.expected,
                                     op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode,
-                                    provenance=_prov(auth))
+                                    provenance=_prov(auth), rate_key=ratelimit.key(auth))
     except (writes.NotFound, writes.StaleEdit, writes.OpIdReuse) as exc:
         return failure(exc)
     return respond(result, 200)
@@ -191,7 +198,7 @@ def add_note(report_id: str, body: NoteBody, auth=Depends(require("note")),
     try:
         result = writes.local_write(report_id, "NOTE", None, {"text": body.text}, auth.actor,
                                     op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode,
-                                    provenance=_prov(auth))
+                                    provenance=_prov(auth), rate_key=ratelimit.key(auth))
     except (writes.NotFound, writes.OpIdReuse) as exc:
         return failure(exc)
     return respond(result, 201)

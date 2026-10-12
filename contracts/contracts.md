@@ -295,11 +295,14 @@ Id `blr`, name Bengaluru, port `8004`, database `data/blr.db`. It is in the port
 ```
 
 - Reads are never limited. Peer replication (`/internal`) and `POST /v1/carry` are never limited.
-- A replay of an `op_id` already stored is answered before the limiter: it is never refused and never counted.
+- A replay of an `op_id` already stored is answered before the limiter: it is never refused and never counted. The same
+  lookup decides `op_id_reuse` (409), so that answer is not counted either.
 - The actor limit is checked after authentication (and the role check) and after the replay check, before anything
   else in the write path. Each write that reaches it costs one token, whatever its outcome; a refused write stores
   nothing and uses no sequence number. Requests that fail validation (422) never reach it.
 - Every accepted write (and every replay) carries `X-RateLimit-Limit` and `X-RateLimit-Remaining` while a limit is set.
+  So does a write that was charged a token and then refused for its own reason (404, 409 `stale_edit`, `report_exists`,
+  `no_conflict`), so a client's meter is right after a refusal too.
 - The actor is the API key's actor today, so two clients that share one key share one allowance. When sign-in is on
   it becomes the credential (section 8.5).
 - Buckets live in each region's memory. A client that moves to another region starts with a full allowance there:
