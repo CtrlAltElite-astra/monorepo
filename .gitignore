@@ -12,3 +12,5 @@ dashboard/dist/
 *.db
 *.db-wal
 *.db-shm
+run/
+region/trust/public_keys.json

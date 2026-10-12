@@ -29,6 +29,10 @@ def region_env(region: str, regions: list) -> dict:
 
 def spawn(region: str, regions: list) -> subprocess.Popen:
     (ROOT / "data").mkdir(exist_ok=True)
+    # every node signs the events it originates; make sure keys and the public registry exist (dev only)
+    sys.path.insert(0, str(ROOT))
+    from region.engine import signing
+    signing.ensure_keys(list(PORTS))
     cmd = [sys.executable, "-m", "uvicorn", "region.main:app", "--host", "127.0.0.1",
            "--port", str(PORTS[region]), "--workers", "1", "--log-level", "warning"]
     return subprocess.Popen(cmd, cwd=ROOT, env=region_env(region, regions))

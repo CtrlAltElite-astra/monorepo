@@ -9,7 +9,8 @@ from region.engine.derive import derive
 def mk(origin, seq, type_, field=None, value=None, sup=(), hlc=(0, 0), report="R-mum-1", actor=None, wall="2026-10-12T14:52:10+05:30"):
     ev = dict(v=1, event_id=f"{origin}:{seq}", origin=origin, seq=seq, report_id=report, type=type_, field=field,
               value=value, supersedes=list(sup), hlc=list(hlc), priority=1,
-              actor=actor or f"officer-{origin}-1", reason=None, wall=wall, sig=None)
+              actor=actor or f"officer-{origin}-1", reason=None, wall=wall, sig=None,
+              op_id=None, observed=None)  # v1.1 envelope keys (null for server-made / not applicable)
     ev["hash"] = canonical.event_hash(ev)
     return ev
 
@@ -29,13 +30,14 @@ report = {"report_id": "R-mum-1", "state": v["state"], "live": v["live"], "confl
           "incomplete": v["incomplete"],
           "consistency": {"replication": "LOCAL_ONLY", "confirmed_by": [], "awaiting": ["pun"], "stale_possible": True}}
 (out / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-status = {"region": "mum", "schema_version": 1, "policy_version": 0, "heads": {"mum": 2, "pun": 0},
+status = {"region": "mum", "schema_version": 1, "policy_version": 1, "heads": {"mum": 2, "pun": 0},
           "event_count": 2, "event_digest": "sha256-hex", "state_hash": "sha256-hex",
           "peers": {"pun": {"link": "down", "reachable": False, "last_ok_s": 47.2, "their_heads": {"pun": 2},
                             "last_error": "link_down", "fails": 5}},
           "level": "ISOLATED", "quarantined": 0, "incomplete_reports": 0,
           # nullable in the live API until Lane B (risk) / Lane D (queues) fill them; sample values for the UI
           "risk": {"unreplicated": 3, "critical_unreplicated": 1, "oldest_age_ms": 47200},
-          "queues": {"P0": 0, "P1": 2, "P2": 1}}
+          "queues": {"P0": 0, "P1": 2, "P2": 1},
+          "carry": {"received": 0, "new": 0, "dup": 0, "rejected": 0}}
 (out / "status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
 print("fixtures written")

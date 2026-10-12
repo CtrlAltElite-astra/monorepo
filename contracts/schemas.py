@@ -14,7 +14,7 @@ FIELDS = [
     "severity", "status", "assigned_team", "people_estimate",
 ]
 
-CATEGORIES = ("flood", "collapse", "medical", "fire", "road_block", "shelter", "other")
+CATEGORIES = ("flood", "collapse", "medical", "fire", "road_block", "shelter", "other", "cart")  # cart: shop demo, v1.1
 STATUSES = ("open", "assigned", "resolved", "closed", "cancelled")
 
 PRIORITY_CRITICAL, PRIORITY_NORMAL, PRIORITY_BULK = 0, 1, 2
@@ -36,6 +36,8 @@ QUEUE_KEYS = ("P0", "P1", "P2")                                         # pendin
 EVENT_KEYS = (
     "v", "event_id", "origin", "seq", "report_id", "type", "field", "value",
     "supersedes", "hlc", "priority", "actor", "reason", "wall", "hash", "sig",
+    "op_id",     # v1.1: client operation id, null for server-made events
+    "observed",  # v1.1: event ids the writer had seen; set only on close / new-info writes
 )
 EVENT_REQUIRED = (
     "event_id", "origin", "seq", "report_id", "type", "supersedes",
