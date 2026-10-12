@@ -1,0 +1,18 @@
+{
+  "_comment": "Freshness policy cases shared by the TypeScript sidecar and the Python region (parity test). age is seconds since the snapshot was issued.",
+  "cases": [
+    { "name": "online login",                   "status": "a", "age": 0,    "purpose": "login",      "allow": true,  "mode": "online" },
+    { "name": "online edge",                    "status": "a", "age": 60,   "purpose": "write",      "allow": true,  "mode": "online" },
+    { "name": "cached just past online",        "status": "a", "age": 61,   "purpose": "write",      "allow": true,  "mode": "cached" },
+    { "name": "cached login edge",              "status": "a", "age": 600,  "purpose": "login",      "allow": true,  "mode": "cached" },
+    { "name": "cached privileged edge",         "status": "a", "age": 600,  "purpose": "privileged", "allow": true,  "mode": "cached" },
+    { "name": "stale write",                    "status": "a", "age": 601,  "purpose": "write",      "allow": true,  "mode": "stale" },
+    { "name": "stale hard bound write",         "status": "a", "age": 900,  "purpose": "write",      "allow": true,  "mode": "stale" },
+    { "name": "stale login denied",             "status": "a", "age": 601,  "purpose": "login",      "allow": false, "reason": "status_stale_for_purpose" },
+    { "name": "stale privileged denied",        "status": "a", "age": 700,  "purpose": "privileged", "allow": false, "reason": "status_stale_for_purpose" },
+    { "name": "past hard bound write denied",   "status": "a", "age": 901,  "purpose": "write",      "allow": false, "reason": "status_too_old" },
+    { "name": "revoked is always denied",       "status": "r", "age": 0,    "purpose": "write",      "allow": false, "reason": "revoked" },
+    { "name": "revoked stays denied when stale","status": "r", "age": 800,  "purpose": "write",      "allow": false, "reason": "revoked" },
+    { "name": "unknown credential denied",      "status": null, "age": 0,  "purpose": "write",      "allow": false, "reason": "unknown_credential" }
+  ]
+}
