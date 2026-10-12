@@ -141,6 +141,11 @@ The engine's own receipt is passed through untouched when it has `candidates`; o
 the stored events (`region/api/receipts.py`), so consumers see one shape on any engine version. Older keys (`values`,
 `event_ids`) are kept.
 
+A CLOSE_VS_NEW_INFO receipt has the same shape: `relationship` stays `"CONCURRENT"`, `rule` and `flags` carry
+`"CLOSE_VS_NEW_INFO"`, `field` is `"status"`, and `candidates` lists the close first, then every change it did not see.
+A candidate's `value` is the status for the close, the note text for a NOTE, and the number for a severity write.
+Candidates carry no `kind` or `field`: a client tells them apart by `rule` and by position, not by extra keys.
+
 ### 3.5 `observed` (CLOSE_VS_NEW_INFO evidence)
 
 A status write (SET or RESOLVE) to `closed` or `cancelled` lists the NOTE and live severity event ids its node had.
