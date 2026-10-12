@@ -1,18 +1,34 @@
-"""API key -> (actor, role). Actor comes from the key, never from the body.
+"""API key -> (actor, role), and the role gate for writes (owner: Akshit).
 
-Basic build: one key from config. Roles are enforced from PDF 2 Phase 1.
+The actor always comes from the key, never from the request body. Decisions are made by the
+active trust adapter (region/trust/adapter.py); the role table is region/trust/roles.py.
+
+401: no key, or a key this region does not know.   403: a known key whose role may not do this.
 """
 from collections import namedtuple
 
 from fastapi import Header, HTTPException
 
-from region import config
+from region.trust import adapter
 
 Auth = namedtuple("Auth", "actor role")
 
 
 def require_key(x_api_key: str = Header(None)) -> Auth:
-    entry = config.settings.api_keys.get(x_api_key or "")
-    if entry is None:
+    """Authenticate only (any known role). Kept for routes that check the role themselves."""
+    d = adapter.get_adapter().verify_actor(x_api_key, None)
+    if not d.allowed:
         raise HTTPException(401, "missing or unknown X-API-Key")
-    return Auth(*entry)
+    return Auth(d.actor, d.role)
+
+
+def require(action: str):
+    """Dependency factory: authenticate AND check the role may perform `action` (roles.PERMISSIONS)."""
+    def dependency(x_api_key: str = Header(None)) -> Auth:
+        d = adapter.get_adapter().verify_actor(x_api_key, action)
+        if d.allowed:
+            return Auth(d.actor, d.role)
+        if d.reason == adapter.UNKNOWN_CREDENTIAL:
+            raise HTTPException(401, "missing or unknown X-API-Key")
+        raise HTTPException(403, f"role '{d.role}' may not {action}")
+    return dependency
