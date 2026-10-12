@@ -116,14 +116,60 @@ def all_links_detail() -> dict:
 # ---- status --------------------------------------------------------------
 ISOLATED_FAILS = 3
 ISOLATED_SILENCE_S = 5.0
+_current_level = "HEALTHY"
+
+
+def current_level() -> str:
+    """Instant cached level for zero-overhead /healthz probes."""
+    return _current_level
+
+
+def set_current_level(lvl: str) -> None:
+    global _current_level
+    _current_level = lvl
+
+
+def compute_risk(conn) -> dict:
+    """Compute data-at-risk for this region (PDF 2 Section 6.8)."""
+    region = config.settings.region
+    peers = config.settings.peers
+    if not peers:
+        return {"unreplicated": 0, "critical_unreplicated": 0, "oldest_age_ms": 0}
+
+    rows = conn.execute("SELECT seq FROM peer_view WHERE origin=?", (region,)).fetchall()
+    max_peer_ack = max([r[0] for r in rows], default=0)
+
+    unrep_rows = conn.execute(
+        "SELECT seq, priority, hlc_l FROM events WHERE origin=? AND seq > ? ORDER BY seq ASC",
+        (region, max_peer_ack),
+    ).fetchall()
+
+    unreplicated = len(unrep_rows)
+    crit_unrep = sum(1 for r in unrep_rows if r[1] == 0)
+    oldest_age_ms = 0
+    if unreplicated > 0:
+        now_ms = int(time.time() * 1000)
+        oldest_age_ms = max(0, now_ms - unrep_rows[0][2])
+
+    return {
+        "unreplicated": unreplicated,
+        "critical_unreplicated": crit_unrep,
+        "oldest_age_ms": oldest_age_ms,
+    }
 
 
 def snapshot() -> dict:
-    """Peers block + region level for GET /v1/status."""
+    """Peers block + region level + risk + queues + carry for GET /v1/status."""
+    global _current_level
     now = time.time()
     mine = heads()
     peers, level = {}, "HEALTHY"
+
     with store.read() as conn:
+        has_isolated = False
+        has_slow = False
+        heads_differ = False
+
         for peer in config.settings.peers:
             st = conn.execute("SELECT last_ok, last_error, fails FROM peer_state WHERE peer=?", (peer,)).fetchone()
             last_ok = st["last_ok"] if st else None
@@ -131,18 +177,59 @@ def snapshot() -> dict:
             their = {r[0]: r[1] for r in conn.execute("SELECT origin, seq FROM peer_view WHERE peer=?", (peer,))}
             silent = last_ok is None or (now - last_ok) > ISOLATED_SILENCE_S
             isolated = fails >= ISOLATED_FAILS or silent
+            l_mode = link_mode(peer)
+
+            if isolated:
+                has_isolated = True
+            if l_mode == "slow":
+                has_slow = True
+            if any(their.get(o, 0) != mine.get(o, 0) for o in set(mine) | set(their)):
+                heads_differ = True
+
             peers[peer] = {
-                "link": link_mode(peer),
+                "link": l_mode,
                 "reachable": not isolated,
                 "last_ok_s": round(now - last_ok, 1) if last_ok else None,
+                "last_ok_ms": int((now - last_ok) * 1000) if last_ok else None,
+                "acked": their,
                 "their_heads": their,
                 "last_error": st["last_error"] if st else None,
                 "fails": fails,
             }
-            if isolated:
-                level = "ISOLATED"
-            elif level != "ISOLATED" and any(their.get(o, 0) != mine.get(o, 0) for o in set(mine) | set(their)):
-                level = "SYNCING"
-    if not config.settings.peers:
-        level = "HEALTHY"
-    return {"peers": peers, "level": level}
+
+        if not config.settings.peers:
+            level = "HEALTHY"
+        elif has_isolated:
+            level = "ISOLATED"
+        elif has_slow:
+            level = "CONSTRAINED"
+        elif heads_differ:
+            level = "RECOVERING"
+        else:
+            level = "HEALTHY"
+
+        _current_level = level
+        risk = compute_risk(conn)
+
+    # Get priority queue counts
+    try:
+        from region.sync import push
+        queues = push.get_queue_counts()
+    except Exception:
+        queues = {"P0": 0, "P1": 0, "P2": 0}
+
+    # Get carry metrics
+    try:
+        from region.sync import carry
+        carry_stats = carry.get_carry_metrics()
+    except Exception:
+        carry_stats = {"received": 0, "new": 0, "dup": 0, "rejected": 0}
+
+    return {
+        "peers": peers,
+        "level": level,
+        "risk": risk,
+        "queues": queues,
+        "carry": carry_stats,
+    }
+

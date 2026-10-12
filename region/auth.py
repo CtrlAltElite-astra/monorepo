@@ -18,8 +18,9 @@ from fastapi import Header, HTTPException
 from region import config
 from region.trust import adapter
 
-# credential_id and mode are None / "online" in base mode (an API key has no credential record).
-Auth = namedtuple("Auth", "actor role credential_id mode", defaults=(None, "online"))
+# Lane A's field order is kept (mode stays third); credential_id is appended and is None in base mode
+# (an API key has no credential record). mode: online | cached | stale (event.auth_mode)
+Auth = namedtuple("Auth", "actor role mode credential_id", defaults=("online", None))
 
 _UNAVAILABLE = ("no_status", "status_too_old", "status_stale_for_purpose")
 
@@ -47,10 +48,10 @@ def _authenticate(x_api_key, authorization, action):
         d = adapter.get_adapter().verify_actor(_bearer(authorization), action)   # X-API-Key deliberately ignored
         if not d.allowed:
             raise _fail(d)
-        return Auth(d.actor, d.role, d.credential_id, d.mode)
+        return Auth(d.actor, d.role, d.mode, d.credential_id)
     d = adapter.get_adapter().verify_actor(x_api_key, action)
     if d.allowed:
-        return Auth(d.actor, d.role, d.credential_id, d.mode)
+        return Auth(d.actor, d.role, d.mode, d.credential_id)
     if d.reason == adapter.UNKNOWN_CREDENTIAL:
         raise HTTPException(401, "missing or unknown X-API-Key")
     raise HTTPException(403, f"role '{d.role}' may not {action}")

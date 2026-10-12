@@ -1,0 +1,53 @@
+/* Design tokens. Every colour in the app comes from here, so light and dark are two small blocks. */
+:root {
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace;
+  --r-xs: 6px; --r-sm: 9px; --r: 13px; --r-lg: 20px; --pill: 999px;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --dur: .22s; --dur-slow: .5s;
+
+  --node-mum: #2f6fde; --node-pun: #7c5ce0; --node-del: #d6409f;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f6fb; --bg-2: #e9eff7; --surface: #ffffff; --surface-2: #f0f4fa; --surface-3: #e4ebf5;
+  --text: #0d1a2c; --text-2: #34465f; --muted: #66788f;
+  --border: #d9e2ee; --border-strong: #bdcadb;
+  --shadow-sm: 0 1px 2px rgba(16, 32, 64, .06);
+  --shadow: 0 1px 2px rgba(16, 32, 64, .05), 0 10px 28px rgba(16, 32, 64, .08);
+  --shadow-lg: 0 24px 70px rgba(16, 32, 64, .22);
+  --teal: #0e9a9a; --blue: #2f6fde; --amber: #e39512;
+  --ok: #138a55; --ok-bg: #dff4ea;
+  --warn: #a96500; --warn-bg: #fcefd2;
+  --bad: #c93434; --bad-bg: #fce4e4;
+  --info: #2860cb; --info-bg: #e3edfc;
+  --accent: #6d3fe0; --accent-bg: #ece6fc;
+  --done: #4a5d76; --done-bg: #e6ecf4;
+  --muted-bg: #e8eef6;
+  --primary: #0e8f8f; --primary-hover: #0b7c7c; --primary-ink: #ffffff;
+  --hero-glow-1: rgba(14, 154, 154, .18); --hero-glow-2: rgba(47, 111, 222, .16);
+  --grid-line: rgba(16, 32, 64, .05);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #08111f; --bg-2: #0c1829; --surface: #101b2e; --surface-2: #15233a; --surface-3: #1b2c48;
+  --text: #e8eefa; --text-2: #c0cde2; --muted: #8799b4;
+  --border: #223250; --border-strong: #324a72;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .4);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 14px 36px rgba(0, 0, 0, .38);
+  --shadow-lg: 0 28px 80px rgba(0, 0, 0, .65);
+  --teal: #2fc6c6; --blue: #6a97ff; --amber: #f5b53f;
+  --ok: #43dd9a; --ok-bg: rgba(67, 221, 154, .13);
+  --warn: #f4b840; --warn-bg: rgba(244, 184, 64, .13);
+  --bad: #ff7f7f; --bad-bg: rgba(255, 127, 127, .13);
+  --info: #86adff; --info-bg: rgba(134, 173, 255, .14);
+  --accent: #b69bff; --accent-bg: rgba(182, 155, 255, .15);
+  --done: #a9b8d0; --done-bg: rgba(169, 184, 208, .13);
+  --muted-bg: rgba(135, 153, 180, .14);
+  --primary: #22b7b7; --primary-hover: #38cccc; --primary-ink: #04171a;
+  --hero-glow-1: rgba(47, 198, 198, .16); --hero-glow-2: rgba(106, 151, 255, .15);
+  --grid-line: rgba(160, 190, 240, .06);
+}

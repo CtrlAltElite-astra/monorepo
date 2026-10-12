@@ -1,21 +1,26 @@
-"""GET /v1/review and POST /v1/reports/{id}/resolve (plan v1.1 section 6.7).
+"""POST /v1/reports/{id}/resolve and GET /v1/review (owner: Akshit; receipts by region/api/receipts.py).
 
-A review item is a conflict receipt with needs_review. Resolving writes a RESOLVE event that supersedes exactly
-the live candidates, so it replicates like any other event and a write that had not seen it re-opens review.
-409 {"error": "stale_resolve", "live": [...]} when the candidates changed meanwhile;
-409 {"error": "no_conflict"} when there is nothing to decide.
+Resolve (supervisor only) writes a RESOLVE event that supersedes exactly the live candidates:
+  409 {"error": "stale_edit", "live": [...]}   the candidates changed while the supervisor was looking
+  409 {"error": "no_conflict"}                  the field has nothing to settle
+  403                                           officers (and anyone but a supervisor) may not resolve
+The decision replicates like any event. A write that had not seen it is concurrent with it and opens a
+new review item: a resolution never hides an edit it did not see.
+
+Auth mode (TRUE sessions): the RESOLVE event carries the supervisor's verified provenance inside its signed hash,
+and the review queue lists only carts the caller may read.
 """
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from contracts import schemas
-from region import config, store
-from region.api import writes
-from region.api.routes_reports import _ok
+from region import store
+from region.api import receipts, writes
+from region.api.routes_reports import _prov, failure, respond
 from region.auth import read_context, require
+from region.engine.derive import order
 from region.trust import ownership
 
 router = APIRouter(prefix="/v1", tags=["review"])
@@ -23,50 +28,44 @@ router = APIRouter(prefix="/v1", tags=["review"])
 
 class ResolveBody(BaseModel):
     field: str
-    value: Any = None
-    candidates: list[str] = Field(default_factory=list)
-    reason: str = Field(min_length=1, max_length=500)
-    op_id: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    value: Any
+    candidates: list[str] = Field(min_length=1, max_length=schemas.MAX_SUPERSEDES)
+    reason: str = Field(min_length=1, max_length=schemas.MAX_REASON)
+    op_id: Optional[str] = Field(default=None, min_length=1, max_length=schemas.OP_ID_MAX)
 
 
-@router.get("/review")
-def review_queue(auth=Depends(read_context)):
-    """Open review items this caller may see. Officers see only their own carts."""
-    with store.read() as conn:
-        owners = ownership.owners(conn) if auth is not None else {}
-        out = []
-        for rid in store.report_ids_newest_first(conn, 100000, 0):
-            if auth is not None and not ownership.can_read(auth, owners.get(rid)):
-                continue
-            view = store.get_view(conn, rid)
-            for c in (view or {}).get("conflicts", []):
-                if c.get("needs_review"):
-                    out.append({"report_id": rid, "title": view["state"].get("title"), "field": c["field"], "receipt": c})
-        return out
-
-
-@router.post("/reports/{report_id}/resolve")
-def resolve(report_id: str, body: ResolveBody, auth=Depends(require("resolve"))):
+@router.post("/reports/{report_id}/resolve", status_code=201)
+def resolve_report(report_id: str, body: ResolveBody, auth=Depends(require("resolve")),
+                   idempotency_key: Optional[str] = Header(None)):
     try:
         value = schemas.validate_field(body.field, body.value)
     except ValueError as e:
         raise HTTPException(422, str(e))
-    with store.read() as conn:
-        view = store.get_view(conn, report_id)
-    if view is None:
-        raise HTTPException(404, "unknown report")
-    if not any(c["field"] == body.field and c.get("needs_review") for c in view["conflicts"]):
-        return JSONResponse(status_code=409, content={"error": "no_conflict"})
-    prov = ({"role": auth.role, "auth_mode": auth.mode, "credential_id": auth.credential_id}
-            if config.settings.auth_enabled else None)
+    op_id = body.op_id or (idempotency_key[: schemas.OP_ID_MAX] if idempotency_key else None)
     try:
-        ev, replayed = writes.local_write_ex(
-            report_id, "RESOLVE", body.field, value, auth.actor,
-            expected=body.candidates, op_id=body.op_id, provenance=prov, reason=body.reason)
-    except writes.NotFound:
-        raise HTTPException(404, "unknown report")
-    except writes.StaleEdit as e:
-        return JSONResponse(status_code=409, content={"error": "stale_resolve", "live": e.live})
-    except writes.OpIdReuse:
-        return JSONResponse(status_code=409, content={"error": "op_id_reuse"})
-    return _ok(ev, 201, replayed)
+        result = writes.resolve(report_id, body.field, value, body.candidates, body.reason, auth.actor,
+                                role=auth.role, auth_mode=auth.mode, op_id=op_id, provenance=_prov(auth))
+    except (writes.NotFound, writes.StaleEdit, writes.NoConflict, writes.OpIdReuse) as exc:
+        return failure(exc)
+    return respond(result, 201)
+
+
+@router.get("/review")
+def review_queue(auth=Depends(read_context)):
+    """Open review items on this node, newest first: [{report_id, title, field, receipt}].
+    Auth mode: only carts the caller may read."""
+    items = []
+    with store.read() as conn:
+        owners = ownership.owners(conn) if auth is not None else {}
+        for row in conn.execute("SELECT report_id, view FROM reports WHERE needs_review=1 AND incomplete=0"):
+            report_id = row[0]
+            if auth is not None and not ownership.can_read(auth, owners.get(report_id)):
+                continue
+            view = store.get_view(conn, report_id)
+            created = min((order(e) for e in store.events_for(conn, report_id) if e["type"] == "CREATE"), default=(0,))
+            for conflict in view["conflicts"]:
+                if conflict.get("needs_review", True):
+                    items.append((created, {"report_id": report_id, "title": view["state"].get("title"),
+                                            "field": conflict["field"], "receipt": receipts.receipt(conn, view, conflict)}))
+    items.sort(key=lambda pair: pair[0], reverse=True)
+    return [item for _, item in items]

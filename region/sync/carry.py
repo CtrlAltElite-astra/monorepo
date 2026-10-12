@@ -14,8 +14,9 @@ Carry is the one route that accepts events from an UNTRUSTED sender, so every ev
                      reuse a sequence number); it was committed before it was acknowledged
     then             the same idempotent ingest() as replication: "new" or "dup"
 
-A browser can therefore only help: it cannot alter, forge or reorder history, and replays are
-ignored by event id.
+A rejected event is kept in the quarantine table as evidence, never applied. A browser can therefore
+only help: it cannot alter, forge or reorder history, and replays are ignored by event id.
+ENABLE_CARRY=0 switches the endpoint off (503) without touching replication.
 """
 import json
 import time
@@ -34,18 +35,33 @@ router = APIRouter(tags=["carry"])
 MAX_CARRY = 200
 MAX_HAS = 500
 MAX_BODY_BYTES = 512 * 1024
+LEVEL_TTL_S = 1.0  # /healthz is probed constantly; the level is recomputed at most this often
 
-_stats = {"received": 0, "new": 0, "dup": 0, "rejected": 0}
+# In-memory carry counters for /v1/status
+_carry_metrics = {"received": 0, "new": 0, "dup": 0, "rejected": 0}
+_level_cache: tuple[float, str] = (0.0, "HEALTHY")
 
 
-def carry_stats() -> dict:
-    return dict(_stats)
+def get_carry_metrics() -> dict:
+    return dict(_carry_metrics)
+
+
+def reset_carry_metrics() -> None:
+    for k in _carry_metrics:
+        _carry_metrics[k] = 0
+
+
+def _level() -> str:
+    global _level_cache
+    now = time.monotonic()
+    if now - _level_cache[0] > LEVEL_TTL_S:
+        _level_cache = (now, state.snapshot()["level"])
+    return _level_cache[1]
 
 
 @router.get("/healthz")
 def healthz():
-    return {"region": config.settings.region, "ok": True, "level": state.snapshot()["level"],
-            "ts": int(time.time() * 1000)}
+    return {"region": config.settings.region, "ok": True, "level": _level(), "ts": int(time.time() * 1000)}
 
 
 class HasBody(BaseModel):
@@ -58,9 +74,12 @@ def events_has(body: HasBody, auth=Depends(require_key)):
         return {"missing": store.missing_ids(conn, body.ids)}
 
 
-def _reject(event, reason: str) -> dict:
-    _stats["rejected"] += 1
+def _reject(event, reason: str, source: str = "") -> dict:
+    _carry_metrics["rejected"] += 1
     eid = event.get("event_id") if isinstance(event, dict) else None
+    if source:
+        with store.tx() as conn:
+            store.quarantine(conn, event, source, reason)
     return {"event_id": eid, "result": "rejected", "reason": reason}
 
 
@@ -83,6 +102,8 @@ def _check(ev) -> str:
 
 @router.post("/v1/carry")
 async def carry(request: Request, auth=Depends(require_key)):
+    if not config.settings.carry_enabled:
+        raise HTTPException(503, "carry_disabled")
     raw = await request.body()
     if len(raw) > MAX_BODY_BYTES:
         raise HTTPException(413, "body too large")
@@ -97,27 +118,30 @@ async def carry(request: Request, auth=Depends(require_key)):
 
     results = []
     me = config.settings.region
+    source = f"carry:{auth.actor}"
     for ev in events:
-        _stats["received"] += 1
+        _carry_metrics["received"] += 1
         reason = _check(ev)
         if reason:
-            results.append(_reject(ev, reason))
+            results.append(_reject(ev, reason, source))
             continue
         if ev["origin"] == me:
             with store.read() as conn:
                 have = store.event_by_id(conn, ev["event_id"])
             if have is None:
-                results.append(_reject(ev, "own_origin"))
+                results.append(_reject(ev, "own_origin", source))
                 continue
-        stats = ingest.ingest([ev], source=f"carry:{auth.actor}")
+        stats = ingest.ingest([ev], source=source)  # quarantines what it rejects
         if stats["rejected"]:
-            _stats["rejected"] += 1
+            _carry_metrics["rejected"] += 1
             results.append({"event_id": ev["event_id"], "result": "rejected",
                             "reason": (stats["rejected_list"] or [{}])[0].get("reason", "rejected")})
         elif stats["new"]:
-            _stats["new"] += 1
+            _carry_metrics["new"] += 1
+            with store.tx() as conn:  # remembered so GET /v1/reports/{id}/history can show "carried by a browser"
+                store.mark_carried(conn, [ev["event_id"]])
             results.append({"event_id": ev["event_id"], "result": "new"})
         else:
-            _stats["dup"] += 1
+            _carry_metrics["dup"] += 1
             results.append({"event_id": ev["event_id"], "result": "dup"})
     return {"results": results}

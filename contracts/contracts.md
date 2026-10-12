@@ -1,8 +1,9 @@
-# SyncShield contracts (v1) — owner: Akshit
+# SyncShield contracts (v1.1) — owner: Akshit
 
-Frozen at 14:30. After that this file, `schemas.py` and the fixtures may only **grow**
+Contract version stays `1`. This file, `schemas.py` and the fixtures may only **grow**
 (new optional fields, new endpoints). Never rename or remove. Changes go through a PR
-labelled `contract` and a line in `CHANGELOG.md`.
+labelled `contract` and a line in `CHANGELOG.md`. v1.1 is additive: every new field is nullable,
+so older events, fixtures and clients keep working.
 
 ## 1. Event envelope
 
@@ -13,72 +14,149 @@ Stored in `events.body` and sent between regions unchanged.
 | `v` | int | contract version, `1` |
 | `event_id` | str | `"<origin>:<seq>"`, globally unique, never reused |
 | `origin`, `seq` | str, int | seq is gap-free per origin, allocated inside the write transaction |
-| `report_id` | str | `"R-<origin>-<seq of its CREATE>"` |
-| `type` | str | `CREATE` \| `SET` \| `NOTE` \| `RESOLVE` (RESOLVE from PDF 2) |
+| `report_id` | str | client-chosen `R-` + 8 hex (carts), or server-made `R-<origin>-<seq of its CREATE>` |
+| `type` | str | `CREATE` \| `SET` \| `NOTE` \| `RESOLVE` |
 | `field` | str\|null | null for CREATE and NOTE |
-| `value` | any | CREATE: `{initial fields}`; NOTE: `{"text": ...}`; SET: the new value |
-| `supersedes` | [event_id] | live values of this field the writer saw and replaces |
-| `hlc` | [ms, counter] | hybrid logical clock; tie-break only |
-| `priority` | 0/1/2 | 0 critical, 1 normal, 2 bulk (used from PDF 2) |
+| `value` | any | CREATE: `{initial fields}`; NOTE: `{"text": ...}`; SET / RESOLVE: the new value |
+| `supersedes` | [event_id] | live values of this field the writer saw and replaces (at most 16) |
+| `hlc` | [ms, counter] | hybrid logical clock; tie-break only, never decides safety |
+| `priority` | 0/1/2 | 0 critical, 1 normal, 2 bulk (`section 3.6`) |
+| `op_id` | str\|null | **v1.1** client operation id (UUID); null for server-made events |
+| `observed` | [event_id]\|null | **v1.1** evidence a close / new-info write had seen (`section 3.5`); else null |
 | `actor` | str | from the API key, never the request body |
-| `reason` | str\|null | required on RESOLVE (PDF 2) |
+| `role` | str | **v1.1** role of the key that authorised the write (`officer` / `supervisor`) |
+| `auth_mode` | str | **v1.1** `online` \| `cached` \| `stale`: how fresh the trust data behind the decision was |
+| `reason` | str\|null | required on RESOLVE |
 | `wall` | str | display only, never ordering |
 | `hash` | str | sha256 of canonical JSON of every key except `hash` and `sig` |
-| `sig` | str\|null | Ed25519, PDF 2 Phase 2 |
+| `sig` | str\|null | **v1.1** base64 Ed25519 over the ASCII bytes of `hash`, made by the origin's own key |
 
-Canonical JSON: `json.dumps(obj, sort_keys=True, separators=(',',':'), ensure_ascii=False)` as UTF-8.
-Tie-break order: `(hlc[0], hlc[1], origin, seq)`.
+Canonical JSON: `json.dumps(obj, sort_keys=True, separators=(',',':'), ensure_ascii=False)` as UTF-8, no floats
+in hashed fields. Tie-break order: `(hlc[0], hlc[1], origin, seq)`.
+
+`schemas.EVENT_KEYS` lists the envelope keys, including `op_id` and `observed` (always present, nullable);
+`schemas.EVENT_OPTIONAL_KEYS` lists the additive `role` and `auth_mode`. Every NEW event carries all of them;
+older events and fixtures may lack the optional two.
 
 ## 2. Report fields
 
 `title` (1–120), `description` (≤2000), `category` (flood, collapse, medical, fire, road_block,
-shelter, other), `location` (`{lat_e6, lon_e6}` ints or null), `severity` (1–5), `status`
+shelter, other, **cart**), `location` (`{lat_e6, lon_e6}` ints or null), `severity` (1–5), `status`
 (open, assigned, resolved, closed, cancelled — no hard deletes), `assigned_team` (str|null),
 `people_estimate` (int|null), `notes` (built from NOTE events). Validation lives in
 `schemas.validate_field` and runs at **write time only**.
 
-## 3. HTTP API (Basic subset)
+The backend is domain neutral. The shop demo only relabels these fields in the browser
+(`web/src/domain/shop.ts`): title = cart owner, severity = delivery speed (1 Standard … 5 Priority),
+status open/assigned/resolved/closed/cancelled = Shopping/Checking out/Paid/Order placed/Cancelled,
+assigned_team = fulfilment centre, one NOTE per item added.
 
-Client header: `X-API-Key: dev-officer`. Internal calls: `X-Region`, `X-Peer-Token`.
+## 3. HTTP API
 
-| method + path | body | response / rule |
-|---|---|---|
-| `POST /v1/reports` | `{title, category, severity, location?, description?, people_estimate?}` | `201 {report, event_id, consistency}`; only after commit |
-| `PATCH /v1/reports/{id}` | `{field, value, expected?: [event_ids]}` | `200 {report, event_id, consistency}`; 404 unknown; 409 `{error, live}` when `expected` differs from live set; 422 bad value |
-| `POST /v1/reports/{id}/notes` | `{text}` | `201 {report, event_id, consistency}` |
-| `GET /v1/reports` | `?limit=&cursor=` | JSON **array** of report views, newest first, incomplete hidden |
-| `GET /v1/reports/{id}` | | report view |
-| `GET /v1/reports/{id}/history` | | JSON **array** of every event of the report (any origin) in `(hlc, origin, seq)` order, exactly as stored; 404 unknown report. Works for a report still waiting for its CREATE |
-| `GET /v1/status` | | status view |
-| `GET /v1/health` | | `{region, ok: true}` |
-| `GET /internal/v1/sync/summary` | | `{region, heads, max_seen, event_count}`; 401 unknown peer; 503 when link down |
-| `GET /internal/v1/sync/events` | `?origin=&after=&limit=` | `{events (seq asc, seq>after), has_more}` |
-| `GET /admin/links`, `GET/POST /admin/links/{peer}` | `{mode: up\|down}` | link table; needs `ENABLE_ADMIN=1` and a valid API key |
+Client headers: `X-Api-Key` (writes), `Idempotency-Key` (optional alias of `op_id`). Internal calls:
+`X-Region`, `X-Peer-Token`. Reads (`GET /v1/...`) need no key; a key is accepted and ignored.
 
-Reserved for PDF 2 (do not reuse): `POST /v1/reports/{id}/resolve`, `GET /v1/review`,
-`POST /internal/v1/sync/push`, `GET /v1/metrics`, `POST /admin/config`, `POST /admin/burst`.
+### 3.0 Errors and bounds
 
-### 3.1 Roles (who may write)
+| status | meaning |
+|---|---|
+| 401 | no key, a key this region does not know, or an unknown peer / bad peer token |
+| 403 | a known key whose role may not do this (checked before the body is read; nothing is stored) |
+| 404 | unknown report |
+| 409 | `stale_edit` (stale `expected` / stale resolve, with `live`), `no_conflict`, `op_id_reuse`, `report_exists` |
+| 422 | validation, or a body larger than 512 kB |
+| 503 + `Retry-After` | overload or link down |
 
-The role comes from the API key table (`API_KEYS=key:actor:role,...`); the actor is always the
-key's actor, never a request field. `401` = no key or a key this region does not know;
-`403` = a known key whose role may not do this (checked before the body is validated; nothing is stored).
+Bounds: title 120 · description 2 000 · note 2 000 · reason 500 · `supersedes`/`expected`/`candidates` ≤ 16 ·
+sync page ≤ 200 events · carry ≤ 200 events · has ≤ 500 ids · body ≤ 512 kB · `op_id` ≤ 64 chars.
+They are constants in `schemas.py`.
 
-| role | create / set / note | resolve (PDF 2) | `/admin/*` |
+### 3.1 Roles (who may do what)
+
+The role comes from the API key table (`API_KEYS=key:actor:role,...`); the actor is always the key's actor.
+
+| role | create / set / note | resolve | `/admin/*` |
 |---|---|---|---|
 | `officer` | yes | no (403) | no |
 | `supervisor` | yes | yes | no |
 | `admin` | no (403) | no | yes (when `ENABLE_ADMIN=1`) |
 
-Reads (`GET /v1/...`) need no key. The table lives in `region/trust/roles.py`; an unknown role is
-denied everything. Partner credentials (Phase 2) map onto the same roles. See `partner-contract.md`.
+The table lives in `region/trust/roles.py`; an unknown role is denied everything. A carried or replicated
+event was authorised by its origin at write time and is bound by that origin's signature; the carrier's own
+role is not re-checked.
 
-## 4. Responses the dashboard depends on
+### 3.2 Endpoint table
 
-See `fixtures/report.json` and `fixtures/status.json` (generated from the real engine by
-`python scripts/gen_fixtures.py`). Report `consistency.replication`: `LOCAL_ONLY` | `PARTIAL` | `REPLICATED`.
-Additions beyond PDF 1 (all additive): status carries `event_digest`, `state_hash`,
-`quarantined`, `incomplete_reports`; peers carry `fails`.
+| method + path | body | response / rule | state |
+|---|---|---|---|
+| `POST /v1/reports` | `{report_id?, op_id?, title, category, severity, location?, description?, people_estimate?}` | `201 {report, event, event_id, consistency}` | built (A) |
+| `PATCH /v1/reports/{id}` | `{field, value, expected?, op_id?}` | `200` same body; 409 `stale_edit` when `expected` differs from the live set | built (A) |
+| `POST /v1/reports/{id}/notes` | `{text, op_id?}` | `201` same body | built (A) |
+| `GET /v1/reports` | `?limit=&cursor=` | array of report views, newest first, incomplete hidden | built (A) |
+| `GET /v1/reports/{id}` | | report view | built (A) |
+| `GET /v1/reports/{id}/history` | | array of every event of the report in order, each with `sig_status` and `carried` | built (A) |
+| `POST /v1/reports/{id}/resolve` | `{field, value, candidates, reason, op_id?}` | supervisor only, `201` same body | built (A) |
+| `GET /v1/review` | | open review items `[{report_id, title, field, receipt}]`, newest first | built (A) |
+| `GET /v1/status` | | status view (section 4.4) | built (A mounts D's snapshot) |
+| `GET /v1/health` | | `{region, ok: true}` | built (A) |
+| `GET /healthz` | | `{region, ok, level, ts}`; no auth, no DB writes | contract; built by D |
+| `POST /v1/carry` | `{events: [envelope, ...]}` | `{results: [{event_id, result: new\|dup\|rejected, reason?}]}` | contract; built by D |
+| `POST /v1/events/has` | `{ids: [event_id, ...]}` | `{missing: [event_id, ...]}` | contract; built by D |
+| `GET /internal/v1/sync/summary`, `/events`, `POST /push` | | peer replication; 401 unknown peer; 503 when link down | built (D) |
+| `GET /admin/links`, `GET/POST /admin/links/{peer}` | `{mode: up\|down\|slow, delay_ms?, rate_bps?}` | needs `ENABLE_ADMIN=1` and a valid key | built (D) |
+
+Reserved, not built yet (do not reuse): `GET /v1/metrics`, `POST /admin/config`, `POST /admin/burst`.
+
+`/v1/carry` results use `reason` in `bad_hash | bad_sig | unknown_origin | shape | own_origin`. `own_origin`: an event of
+THIS node that it does not hold is never imported (it would reuse a sequence number; it was committed before it was
+acknowledged). It must stay disabled until signature verification is on. Any valid API key may call it: the event
+signatures, not the carrier, are the protection. Accepted events go through the same idempotent `ingest()` as replication.
+
+### 3.3 Writes: `op_id`, report ids, signed events, replays
+
+- `POST /v1/reports` may name its own cart: `report_id` must match `^R-[0-9a-f]{8}$` (422 otherwise). A second CREATE for an
+  existing id with a different `op_id` is `409 {"error": "report_exists"}`. Without a `report_id` the server makes `R-<region>-<seq>`.
+- Every 2xx body is `{"report": <view>, "event": <the full signed envelope>, "event_id", "consistency"}`. The browser keeps `event`
+  in its outbox until a peer has it; it is the exact envelope stored here and replicated to peers.
+- A retried write (same `op_id`, or the `Idempotency-Key` header) never creates a second event: the node answers **200** with
+  the original event and the header `Idempotent-Replay: true`. This also holds when the original event arrived here by
+  replication or carry. The replay check runs before the stale-`expected` check.
+- The same `op_id` with a different body is `409 {"error": "op_id_reuse"}`.
+- Events sharing an `op_id` count as one write in `derive()` (Lane B's op_id group rule).
+
+### 3.4 Resolve and review
+
+`POST /v1/reports/{id}/resolve` (supervisor) writes a `RESOLVE` event (priority 0) that supersedes exactly the live
+candidates. `409 stale_edit` carries the `live` ids when the candidates changed; `409 no_conflict` when the field has
+nothing to settle. A write that never saw the resolution is concurrent with it and opens a new review item: a resolution
+never hides an edit it did not see. A receipt is:
+
+```json
+{"field": "status", "relationship": "CONCURRENT", "rule": "STATUS_MOST_ACTIVE", "policy_version": 1,
+ "provisional": "assigned", "needs_review": true, "flags": [],
+ "candidates": [{"event_id": "mum:4", "value": "closed", "origin": "mum", "actor": "agent-mum-1", "wall": "..."}]}
+```
+
+The engine's own receipt is passed through untouched when it has `candidates`; otherwise the API builds this shape from
+the stored events (`region/api/receipts.py`), so consumers see one shape on any engine version. Older keys (`values`,
+`event_ids`) are kept.
+
+### 3.5 `observed` (CLOSE_VS_NEW_INFO evidence)
+
+A status write (SET or RESOLVE) to `closed` or `cancelled` lists the NOTE and live severity event ids its node had.
+A NOTE or a severity write lists the live status event ids its node had. Every other event has `observed: null`.
+The engine raises the review item when a live close `c` and a NOTE / severity ≥ 4 write `i` exist where neither
+lists the other; the check uses only the event set, so it is identical on every node.
+
+### 3.6 Priority
+
+0 critical: severity ≥ 4 on CREATE or SET, status → resolved/closed/cancelled, a fulfilment centre assigned, any
+RESOLVE · 2 bulk: NOTE · 1 normal: everything else. The write path stores the result on the event; the UI must
+show the stored value, not recompute it.
+
+## 4. Responses the UI depends on
+
+See `fixtures/report.json` and `fixtures/status.json` (generated by `python scripts/gen_fixtures.py`).
 
 ### 4.0 Report `consistency` block
 
@@ -101,58 +179,63 @@ Additions beyond PDF 1 (all additive): status carries `event_digest`, `state_has
 | `HEALTHY` | every peer reachable, heads equal | now |
 | `SYNCING` | peers reachable, heads differ | now |
 | `ISOLATED` | a peer failed 3 times or was silent for 5 s; writes still accepted | now |
-| `CONSTRAINED` | link is up but measured slow; P0/P1 first, P2 deferred (never dropped) | PDF 2 |
-| `RECOVERING` | link just came back; priority catch-up in progress | PDF 2 |
-| `OVERLOADED` | admission limit reached | PDF 2 |
+| `CONSTRAINED` | link is up but measured slow; P0/P1 first, P2 deferred (never dropped) | by the sync lane |
+| `RECOVERING` | link just came back; priority catch-up in progress | by the sync lane |
+| `OVERLOADED` | write queue at its limit | by the sync lane |
 
-Clients must treat an unknown `level` as "unknown", never as healthy.
+Clients must treat an unknown `level` as "unknown", never as healthy. A browser that cannot reach a node shows it
+as UNKNOWN: that is a UI state, not a node level.
 
-### 4.2 Optional nullable status blocks
+### 4.2 Data at risk
 
-Both keys are always present in `GET /v1/status` and are `null` until the owning lane fills them
-in (`risk`: Rahil's `engine/risk.py`; `queues`: Simrit's push queue). Consumers must handle `null`.
-
-```json
-"risk":   {"unreplicated": 3, "critical_unreplicated": 1, "oldest_age_ms": 47200},
-"queues": {"P0": 0, "P1": 2, "P2": 1}
-```
-
-- `risk.unreplicated`: acknowledged events of THIS region that no peer has confirmed holding.
-- `risk.critical_unreplicated`: the subset with `priority == 0`.
-- `risk.oldest_age_ms`: age of the oldest unreplicated event (0 when none).
-- `queues.P0|P1|P2`: events waiting to be pushed to at least one peer, per priority lane.
+`risk` is always present and computed by the region: `unreplicated` = events of THIS region whose seq is above every
+peer's acknowledged head for this region (what a crash right now would lose unless a browser outbox carries it);
+`critical_unreplicated` = the subset with `priority == 0`; `oldest_age_ms` = age of the lowest-seq one (0 when none).
+A snapshot from the sync lane overrides the computed value.
 
 ### 4.3 List ordering and paging
 
-`GET /v1/reports` is ordered newest first by the CREATE event's `(hlc, origin, seq)`, so every
-region returns the same order for the same event set. `cursor` is an integer offset;
-`limit` is clamped to 1..500; negative `limit`/`cursor` are rejected with 422.
+`GET /v1/reports` is ordered newest first by the CREATE event's `(hlc, origin, seq)`, so every region returns the
+same order for the same event set. `cursor` is an integer offset; `limit` is clamped to 1..500; negative values are 422.
+
+### 4.4 `GET /v1/status`
+
+```json
+{"region": "mum", "level": "HEALTHY", "policy_version": 1, "schema_version": 1,
+ "heads": {"mum": 17, "pun": 9, "del": 0}, "event_count": 26,
+ "peers": {"pun": {"link": "up", "reachable": true, "fails": 0, "last_ok_s": 0.4, "last_ok_ms": 412,
+                   "their_heads": {"mum": 17, "pun": 9}, "acked": {"mum": 17, "pun": 9}, "last_error": null}},
+ "event_digest": "9f3a..", "state_hash": "c1d4..", "quarantined": 0, "incomplete_reports": 0,
+ "risk": {"unreplicated": 0, "critical_unreplicated": 0, "oldest_age_ms": 0},
+ "queues": {"P0": 0, "P1": 0, "P2": 0},
+ "carry": {"received": 0, "new": 0, "dup": 0, "rejected": 0}}
+```
+
+`queues` is `null` until the sync lane supplies it; `carry` is the node's carry counters (since it started). Consumers must
+handle `null`. `acked` repeats
+`their_heads` under the v1.1 name. The global badge is computed by the client from every region's status:
+CONVERGED only when every configured region is reachable and all report the same `event_digest`, `state_hash` and
+`policy_version`; UNKNOWN if any is unreachable; INCOMPATIBLE if policy versions differ; DIVERGED if heads are equal
+but hashes differ (a bug alarm).
 
 ## 5. Behavioural rules everyone relies on
 
 - A write never waits for, or calls, another region.
-- 201 is returned only after the SQLite commit (`synchronous=FULL`).
+- A 2xx is returned only after the SQLite commit (`synchronous=FULL`).
 - One Uvicorn worker per region.
-- Replication is idempotent: applying the same page twice changes nothing.
-- A received event is checked for shape, hash and identity only; never re-validated against business rules.
+- Every event is signed by its origin inside the write transaction; a node never signs another node's events.
+- Replication is idempotent: applying the same page twice changes nothing; the same `op_id` is the same write.
+- A received or carried event is checked for shape, hash, signature and identity only; never re-validated against business rules.
 - One link switch blocks both directions (outbound pull skipped, inbound `/internal` returns 503).
+- Keys: each region keeps `keys/<region>.key` (git-ignored) and publishes `keys/<region>.pub`; the committed registry is
+  `region/trust/public_keys.json`. A region id cannot silently take a different key.
 
-## 6. v1.1 additions (implemented; additive)
+## 6. Cross-origin access
 
-| endpoint | rule |
-|---|---|
-| `GET /healthz` | no auth; `{region, ok, level, ts}`; the browser SDK probes it |
-| `POST /v1/events/has` | `{ids:[<=500]}` -> `{missing:[...]}`; any valid API key |
-| `POST /v1/carry` | `{events:[<=200]}`, body <= 512 kB -> `{results:[{event_id, result: new\|dup\|rejected, reason?}]}`; any valid API key |
+Regions allow `CORS_ORIGINS` (default `http://localhost:5173`, `http://127.0.0.1:5173`, `:4173`) with the headers
+`X-Api-Key`, `Content-Type`, `Idempotency-Key`, `X-Admin-Key`, and expose `Idempotent-Replay` and `Retry-After`.
 
-Carry reasons: `shape`, `unknown_origin` (no registered public key), `bad_hash` (edited), `bad_sig` (missing or forged),
-`own_origin` (an event of this node that it does not hold is never imported). Accepted events go through the same
-idempotent `ingest()` as replication.
-
-Signing: `keys/<region>.key` (private, git-ignored) and `region/trust/public_keys.json` (registry, generated locally for dev).
-Peers authenticate with `X-Peer-Token`, so unsigned peer events are still accepted and any signature present is verified.
-
-### Policy v1 (the defined conflict-resolution policy)
+## 7. Policy v1 (the defined conflict-resolution policy; implemented in the engine by Lane B / Lane C)
 
 | field | concurrent rule | review |
 |---|---|---|
@@ -166,5 +249,6 @@ Peers authenticate with `X-Peer-Token`, so unsigned peer events are still accept
 | CLOSE_VS_NEW_INFO | a live close and a NOTE / severity >= 4 write that did not observe each other; status stays as derived | yes |
 
 Events sharing an `op_id` are ONE write: superseding one member supersedes all, one member stays live, one note is shown.
-Events without `observed` (older nodes) never raise CLOSE_VS_NEW_INFO.
-
+Events without `observed` (older nodes) never raise CLOSE_VS_NEW_INFO. Keys: `keys/<region>.key` (private, git-ignored) and
+`region/trust/public_keys.json` (registry, generated locally for development, git-ignored; `scripts/gen_keys.py`).
+Peers authenticate with `X-Peer-Token`, so an unsigned peer event is still accepted today and any signature present is verified.

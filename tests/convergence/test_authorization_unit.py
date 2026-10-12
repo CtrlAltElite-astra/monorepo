@@ -341,15 +341,19 @@ def test_review_queue_and_resolve_with_the_role_gate(api, world):
     body = {"field": "assigned_team", "value": "Gurgaon", "candidates": ["pun:1", "del:1"], "reason": "closest centre"}
     assert api.post(f"/v1/reports/{rid}/resolve", json=body, headers=a).status_code == 403          # officer
     stale = api.post(f"/v1/reports/{rid}/resolve", json={**body, "candidates": ["pun:1"]}, headers=s)
-    assert stale.status_code == 409 and stale.json()["error"] == "stale_resolve" and "live" in stale.json()
+    assert stale.status_code == 409 and stale.json()["error"] == "stale_edit" and "live" in stale.json()
     ok = api.post(f"/v1/reports/{rid}/resolve", json=body, headers=s)
     assert ok.status_code == 201, ok.text
     ev = ok.json()["event"]
     assert ev["type"] == "RESOLVE" and ev["reason"] == "closest centre" and ev["actor"] == ACTOR_S and ev["role"] == "supervisor"
     assert api.get(f"/v1/reports/{rid}", headers=s).json()["state"]["assigned_team"] == "Gurgaon"
     assert api.get("/v1/review", headers=s).json() == []
+    # Lane A's order on main: the candidates are checked first. The old ones are no longer live ...
     again = api.post(f"/v1/reports/{rid}/resolve", json=body, headers=s)
-    assert again.status_code == 409 and again.json()["error"] == "no_conflict"
+    assert again.status_code == 409 and again.json()["error"] == "stale_edit" and again.json()["live"] == [ev["event_id"]]
+    # ... and with the live resolution as the candidate there is nothing left to settle.
+    nothing = api.post(f"/v1/reports/{rid}/resolve", json={**body, "candidates": [ev["event_id"]]}, headers=s)
+    assert nothing.status_code == 409 and nothing.json()["error"] == "no_conflict"
 
 
 def test_event_provenance_is_inside_the_signed_hash(api, world):

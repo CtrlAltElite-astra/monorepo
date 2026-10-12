@@ -17,6 +17,8 @@ Behaviour when nothing is provisioned: `sign()` returns None (events stay unsign
 import base64
 import json
 import os
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -102,11 +104,54 @@ def verify(origin: str, hash_hex: str, sig_b64: Optional[str]) -> bool:
         return False
 
 
+@contextmanager
+def _registry_lock(path: Path, timeout_s: float = 8.0):
+    """Cross-process lock around the registry read-modify-write. Three regions that start together must not
+    erase each other's entry (a lost update would make a node's signatures unverifiable until it restarts)."""
+    lock = path.with_name(path.name + ".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.time() + timeout_s
+    while True:
+        try:
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - lock.stat().st_mtime > 10:  # left behind by a crashed holder
+                    lock.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass
+            if time.time() > deadline:
+                raise TimeoutError(f"could not lock {lock}")
+            time.sleep(0.02)
+    try:
+        yield
+    finally:
+        os.close(fd)
+        lock.unlink(missing_ok=True)
+
+
+def _write_registry_atomically(path: Path, registry: dict) -> None:
+    tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    for attempt in range(20):  # Windows can refuse the replace for a moment while another process reads the file
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(0.02 * (attempt + 1))
+    os.replace(tmp, path)
+
+
 def ensure_keys(regions) -> dict:
-    """Create any missing private key and (re)write the public registry. Dev convenience."""
+    """Create any missing private key and add each region's public key to the registry. Dev convenience.
+
+    Safe to call from several processes at once: each region's private key is only written by its own caller,
+    and the shared registry is updated under a lock, re-read inside it, and replaced atomically."""
     kd = keys_dir()
     kd.mkdir(parents=True, exist_ok=True)
-    registry = dict(public_keys())
+    mine = {}
     for r in regions:
         path = kd / f"{r}.key"
         if path.exists():
@@ -115,9 +160,15 @@ def ensure_keys(regions) -> dict:
             key = Ed25519PrivateKey.generate()
             path.write_text(_b64(key.private_bytes(
                 serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())))
-        registry[r] = _b64(_raw_public(key))
+        mine[r] = _b64(_raw_public(key))
     pf = public_keys_file()
     pf.parent.mkdir(parents=True, exist_ok=True)
-    pf.write_text(json.dumps(registry, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    with _registry_lock(pf):
+        try:
+            registry = json.loads(pf.read_text(encoding="utf-8"))  # fresh from disk, not the mtime cache
+        except (OSError, ValueError):
+            registry = {}
+        registry.update(mine)
+        _write_registry_atomically(pf, registry)
     _priv_cache.clear()
     return registry
