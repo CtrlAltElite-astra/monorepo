@@ -136,3 +136,35 @@ region returns the same order for the same event set. `cursor` is an integer off
 - Replication is idempotent: applying the same page twice changes nothing.
 - A received event is checked for shape, hash and identity only; never re-validated against business rules.
 - One link switch blocks both directions (outbound pull skipped, inbound `/internal` returns 503).
+
+## 6. v1.1 additions (implemented; additive)
+
+| endpoint | rule |
+|---|---|
+| `GET /healthz` | no auth; `{region, ok, level, ts}`; the browser SDK probes it |
+| `POST /v1/events/has` | `{ids:[<=500]}` -> `{missing:[...]}`; any valid API key |
+| `POST /v1/carry` | `{events:[<=200]}`, body <= 512 kB -> `{results:[{event_id, result: new\|dup\|rejected, reason?}]}`; any valid API key |
+
+Carry reasons: `shape`, `unknown_origin` (no registered public key), `bad_hash` (edited), `bad_sig` (missing or forged),
+`own_origin` (an event of this node that it does not hold is never imported). Accepted events go through the same
+idempotent `ingest()` as replication.
+
+Signing: `keys/<region>.key` (private, git-ignored) and `region/trust/public_keys.json` (registry, generated locally for dev).
+Peers authenticate with `X-Peer-Token`, so unsigned peer events are still accepted and any signature present is verified.
+
+### Policy v1 (the defined conflict-resolution policy)
+
+| field | concurrent rule | review |
+|---|---|---|
+| title, description, category | latest by (hlc, origin, seq) | no |
+| severity | highest | receipt only |
+| status | most active: open < assigned < resolved < closed = cancelled; lowest wins, latest breaks ties | yes |
+| assigned_team | earliest by tie-break order; `DOUBLE_DISPATCH` when two different teams | yes |
+| location | latest; review if candidates are 200 m or more apart | if far |
+| people_estimate | highest, never summed | yes |
+| notes | union by event id | n/a |
+| CLOSE_VS_NEW_INFO | a live close and a NOTE / severity >= 4 write that did not observe each other; status stays as derived | yes |
+
+Events sharing an `op_id` are ONE write: superseding one member supersedes all, one member stays live, one note is shown.
+Events without `observed` (older nodes) never raise CLOSE_VS_NEW_INFO.
+

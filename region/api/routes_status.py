@@ -5,7 +5,7 @@ from contracts.schemas import CONTRACT_VERSION
 from region import config, store
 from region.engine import digest
 from region.engine.derive import POLICY_VERSION
-from region.sync import state
+from region.sync import carry as carry_mod, state
 
 router = APIRouter(prefix="/v1", tags=["status"])
 
@@ -36,4 +36,5 @@ def status():
             # "risk"/"queues" to state.snapshot() and they flow through with no change here.
             "risk": snap.get("risk"),
             "queues": snap.get("queues"),
+            "carry": carry_mod.carry_stats(),
         }

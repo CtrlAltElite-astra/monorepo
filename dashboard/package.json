@@ -1,12 +1,13 @@
 {
-  "name": "SyncShield-dashboard",
+  "name": "syncshield-dashboard",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite --port 5173",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test src/sdk/syncshieldClient.test.js src/domain/shop.test.js src/sdk/prove.test.js"
   },
   "dependencies": {
     "react": "^18.3.1",

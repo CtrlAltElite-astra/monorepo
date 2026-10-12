@@ -77,9 +77,56 @@ export async function getHistory(r, id) {
 }
 
 // Cut or heal one pair: the switch is set on BOTH regions (each backend enforces its own half).
-export async function setPairLink(a, b, mode) {
+// extra: {delay_ms, rate_bps, drop_pct} for mode 'slow'.
+export async function setPairLink(a, b, mode, extra = {}) {
   return Promise.allSettled([
-    call(`${a.url}/admin/links/${b.id}`, { method: 'POST', body: body({ mode }) }),
-    call(`${b.url}/admin/links/${a.id}`, { method: 'POST', body: body({ mode }) }),
+    call(`${a.url}/admin/links/${b.id}`, { method: 'POST', body: body({ mode, ...extra }) }),
+    call(`${b.url}/admin/links/${a.id}`, { method: 'POST', body: body({ mode, ...extra }) }),
   ])
+}
+
+// ---- chaos agent (scripts/chaos_agent.py): crash / start a node. Dev and demo only. ----
+export const CHAOS_URL = (import.meta.env.VITE_CHAOS_URL || 'http://127.0.0.1:9000').replace(/\/$/, '')
+const ADMIN_KEY = import.meta.env.VITE_ADMIN_KEY || 'dev-admin'
+export const API_KEY = KEY
+
+async function chaos(path, method = 'POST', payload) {
+  if (FIXTURES) throw new Error('fixture mode: chaos disabled')
+  const ctl = new AbortController()
+  const t = setTimeout(() => ctl.abort(), 15000)
+  try {
+    const headers = { 'X-Admin-Key': ADMIN_KEY, ...(payload ? { 'Content-Type': 'application/json' } : {}) }
+    const r = await fetch(CHAOS_URL + path, { method, headers, body: payload ? JSON.stringify(payload) : undefined, signal: ctl.signal })
+    const b = await r.json().catch(() => null)
+    if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status, body: b })
+    return b
+  } finally {
+    clearTimeout(t)
+  }
+}
+export const crashRegion = (id) => chaos(`/crash/${id}`)
+export const startRegion = (id) => chaos(`/start/${id}`)
+export const chaosState = () => chaos('/state', 'GET')
+// Dev-only: inject one bad event (mode: edit | forge | reuse) and report whether it was quarantined.
+export const tamperRegion = (id, mode) => chaos(`/tamper/${id}`, 'POST', { mode })
+
+// ---- direct, single-node calls (no failover): used by the Prove-it script ----
+export async function nodeCall(region, method, path, payload) {
+  try {
+    const b = await call(region.url + path, method === 'GET' ? {} : { method, body: JSON.stringify(payload || {}) })
+    return { ok: true, status: 200, body: b }
+  } catch (e) {
+    return { ok: false, status: e.status || 0, body: e.body || null }
+  }
+}
+export const nodeStatus = async (region) => (await nodeCall(region, 'GET', '/v1/status')).body
+export const nodeReport = async (region, id) => (await nodeCall(region, 'GET', `/v1/reports/${id}`)).body
+export async function nodeHas(region, ids) {
+  const out = []
+  for (let i = 0; i < ids.length; i += 500) {
+    const r = await nodeCall(region, 'POST', '/v1/events/has', { ids: ids.slice(i, i + 500) })
+    if (!r.ok) return null
+    out.push(...r.body.missing)
+  }
+  return { missing: out }
 }

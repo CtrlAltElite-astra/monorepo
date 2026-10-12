@@ -1,6 +1,7 @@
 const TONE = {
   REPLICATED: 'good', PARTIAL: 'warn', LOCAL_ONLY: 'bad',
-  HEALTHY: 'good', SYNCING: 'warn', ISOLATED: 'bad', OVERLOADED: 'bad',
+  HEALTHY: 'good', SYNCING: 'warn', CONSTRAINED: 'warn', RECOVERING: 'warn', ISOLATED: 'bad', OVERLOADED: 'bad',
+  up: 'good', slow: 'warn', down: 'bad',
   online: 'good', cached: 'warn', stale: 'bad',
 }
 

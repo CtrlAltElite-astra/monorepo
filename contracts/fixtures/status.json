@@ -1,7 +1,7 @@
 {
   "region": "mum",
   "schema_version": 1,
-  "policy_version": 0,
+  "policy_version": 1,
   "heads": {
     "mum": 2,
     "pun": 0
@@ -33,5 +33,11 @@
     "P0": 0,
     "P1": 2,
     "P2": 1
+  },
+  "carry": {
+    "received": 0,
+    "new": 0,
+    "dup": 0,
+    "rejected": 0
   }
 }

@@ -1,0 +1,127 @@
+{
+  "description": "Control: the order observed every item, so there must be NO review item.",
+  "events": [
+    {
+      "v": 1,
+      "event_id": "mum:1",
+      "origin": "mum",
+      "seq": 1,
+      "report_id": "R-b0b00002",
+      "type": "CREATE",
+      "field": null,
+      "value": {
+        "title": "Bob",
+        "description": "",
+        "category": "cart",
+        "severity": 1,
+        "status": "open",
+        "assigned_team": null,
+        "location": null,
+        "people_estimate": null
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277000000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "op-create-bob",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "490a6710c3fcd7cae725cf61dfaf3e9d1e2589f986e80a48e50d101c3b636825",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "mum:2",
+      "origin": "mum",
+      "seq": 2,
+      "report_id": "R-b0b00002",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"EARBUD-01\",\"name\":\"Wireless earbuds\",\"qty\":1,\"price\":1999,\"user\":\"Bob\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277001000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-bob-1",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "3c40eacceb6c8ca796dbae1b40e67bae996d9aa36bc14730ef6fb7f98d00a286",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "pun:1",
+      "origin": "pun",
+      "seq": 1,
+      "report_id": "R-b0b00002",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"CHAI-01\",\"name\":\"Masala chai box\",\"qty\":1,\"price\":349,\"user\":\"Bob\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277001500,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-bob-2",
+      "actor": "agent-pun-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "b41e4d1e35b991e6682bd0228f22d6d977a04a320600412c1774beb884aae807",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "mum:3",
+      "origin": "mum",
+      "seq": 3,
+      "report_id": "R-b0b00002",
+      "type": "SET",
+      "field": "status",
+      "value": "closed",
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1760277005000,
+        0
+      ],
+      "priority": 0,
+      "op_id": "op-bob-order",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "observed": [
+        "mum:1",
+        "mum:2",
+        "pun:1"
+      ],
+      "hash": "95091db69f0e9db7a198eec90793efaf71ff634b78db4fb411400cac3ca49619",
+      "sig": null
+    }
+  ],
+  "expected": {
+    "state": {
+      "status": "closed"
+    },
+    "review_items": []
+  }
+}

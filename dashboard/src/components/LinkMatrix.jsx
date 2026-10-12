@@ -1,3 +1,5 @@
+import Badge from './Badge.jsx'
+
 // Partition lab: row = region reporting, column = peer. Each cell is that row's own view of its link.
 // A pair is "half cut" when only one side is down. The backend blocks both directions anyway; shown for honesty.
 export default function LinkMatrix({ regions, snaps, busy, onToggle }) {
@@ -24,7 +26,7 @@ export default function LinkMatrix({ regions, snaps, busy, onToggle }) {
                     <button disabled={busy} className={m === 'down' ? 'heal' : 'cut'} onClick={() => onToggle(a, b, m)}>
                       {m === 'down' ? 'heal' : 'cut'}
                     </button>{' '}
-                    <span className={`chip ${m === 'down' ? 'bad' : 'good'}`}>{m}</span>
+                    <Badge value={m} title={m === 'slow' ? 'throttled link: delay and rate limit applied' : undefined} />
                     {half && <span className="chip warn" title="the other side disagrees">half cut</span>}
                   </td>
                 )

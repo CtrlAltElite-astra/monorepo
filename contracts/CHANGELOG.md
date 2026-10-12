@@ -12,3 +12,17 @@
   - New `GET /v1/reports/{id}/history`: array of the report's events in `(hlc, origin, seq)` order (contracts.md section 3).
   - Roles enforced on `POST /v1/reports`, `PATCH /v1/reports/{id}`, `POST /v1/reports/{id}/notes`: officer and supervisor write, admin and unknown roles get 403 (contracts.md 3.1). A known key that was accepted before as any role may now be refused.
   - New `contracts/partner-contract.md` (proposed partner API) and `region/trust/adapter.py` (adapter interface).
+- **v1.1 (2026-10-12, additive)** zero-loss failover and policy v1 (SyncShield plan v1.1).
+  - Event envelope gains `op_id` (client operation id, null for server-made events) and `observed`
+    (event ids the writer had seen; set only on close / new-info writes). Both are always present (nullable).
+    Migration: `events.op_id` + index, applied automatically on start (`store._migrate_v11`).
+  - `sig` is now filled: base64 Ed25519 over the ASCII hex `hash`, by the origin node's key.
+  - 2xx write bodies also carry the full signed `event`. A replayed `op_id` returns 200 + `Idempotent-Replay: true`;
+    same `op_id` with a different body is 409 `op_id_reuse`. `Idempotency-Key` header is accepted as an alias.
+  - `POST /v1/reports` accepts an optional client `report_id` (`R-` + 8 hex); taken id is 409 `report_exists`.
+  - New: `GET /healthz`, `POST /v1/events/has`, `POST /v1/carry` (hash + signature verified, own-origin events never imported).
+  - `/v1/status` gains `carry {received,new,dup,rejected}`; `policy_version` is now 1.
+  - Conflict receipts gain `relationship`, `candidates[]`, `provisional`, `policy_version`, `flags` (`values`/`event_ids` kept).
+    New rules: `HIGHEST`, `STATUS_MOST_ACTIVE`, `EARLIEST_HLC` (+ `DOUBLE_DISPATCH`), `LATEST_HLC`, `CLOSE_VS_NEW_INFO`.
+  - `CATEGORIES` gains `cart`.
+

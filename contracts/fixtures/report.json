@@ -5,7 +5,7 @@
     "description": "",
     "category": "collapse",
     "location": null,
-    "severity": 4,
+    "severity": 5,
     "status": "open",
     "assigned_team": null,
     "people_estimate": null,
@@ -46,6 +46,23 @@
   "conflicts": [
     {
       "field": "severity",
+      "relationship": "CONCURRENT",
+      "candidates": [
+        {
+          "event_id": "mum:2",
+          "value": 5,
+          "origin": "mum",
+          "actor": "officer-mum-1",
+          "wall": "2026-10-12T14:52:10+05:30"
+        },
+        {
+          "event_id": "pun:1",
+          "value": 4,
+          "origin": "pun",
+          "actor": "officer-pun-1",
+          "wall": "2026-10-12T14:52:10+05:30"
+        }
+      ],
       "values": [
         5,
         4
@@ -54,8 +71,11 @@
         "mum:2",
         "pun:1"
       ],
-      "rule": "v0-latest",
-      "needs_review": true
+      "rule": "HIGHEST",
+      "policy_version": 1,
+      "provisional": 5,
+      "needs_review": false,
+      "flags": []
     }
   ],
   "incomplete": false,

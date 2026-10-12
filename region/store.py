@@ -29,10 +29,41 @@ def init(db_path: str | None = None) -> None:
     _conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
     _conn.row_factory = sqlite3.Row
     _conn.executescript(MIGRATION.read_text(encoding="utf-8"))
+    _migrate_v11(_conn)
     _conn.execute("INSERT OR IGNORE INTO node_meta (k, v) VALUES ('region', ?)", (config.settings.region,))
     stored = _conn.execute("SELECT v FROM node_meta WHERE k='region'").fetchone()[0]
     if stored != config.settings.region:
         raise RuntimeError(f"{path} belongs to region '{stored}', not '{config.settings.region}'")
+    rebuild_stale_views()
+
+
+def _migrate_v11(conn) -> None:
+    """Contract v1.1 (additive): events.op_id + index. Idempotent, safe on every start."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(events)")}
+    if "op_id" not in cols:
+        conn.execute("ALTER TABLE events ADD COLUMN op_id TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_events_op ON events (op_id)")
+
+
+def rebuild_stale_views() -> int:
+    """Re-derive every stored view whose policy_version differs from the engine's.
+
+    Views are a projection of the event log, so this is always safe. Without it a node that was
+    upgraded would keep old-policy views for reports nobody touched, and nodes would disagree on
+    state_hash until each report happened to be edited again.
+    """
+    n = 0
+    with tx() as conn:
+        rows = conn.execute("SELECT report_id, view FROM reports").fetchall()
+        for rid, raw in rows:
+            try:
+                ver = json.loads(raw).get("policy_version")
+            except ValueError:
+                ver = None
+            if ver != derive_mod.POLICY_VERSION:
+                save_view(conn, rid, derive_mod.derive(events_for(conn, rid)))
+                n += 1
+    return n
 
 
 def close() -> None:
@@ -106,11 +137,12 @@ def _row_params(ev: dict):
     return (
         ev["event_id"], ev["origin"], ev["seq"], ev["report_id"], ev["type"], ev.get("field"),
         ev.get("priority", 1), ev["hlc"][0], ev["hlc"][1], ev["hash"], canonical.dumps(ev), time.time(),
+        ev.get("op_id"),
     )
 
 
 _INSERT = ("INSERT INTO events (event_id, origin, seq, report_id, type, field, priority, hlc_l, hlc_c, "
-           "hash, body, received_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+           "hash, body, received_at, op_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
 
 
 def insert_event(conn, ev: dict) -> None:
@@ -125,6 +157,38 @@ def insert_event_if_absent(conn, ev: dict) -> str:
         return "dup" if row[0] == ev["hash"] else "mismatch"
     conn.execute(_INSERT, _row_params(ev))
     return "new"
+
+
+def event_by_op(conn, op_id: str):
+    """The event that carries this client operation id (own write, replicated or carried), or None."""
+    row = conn.execute("SELECT body FROM events WHERE op_id=? ORDER BY received_at, seq LIMIT 1", (op_id,)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def op_get(conn, op_id: str):
+    """{req_hash, event_id} recorded when this node first served the operation, or None."""
+    row = conn.execute("SELECT req_hash, response FROM idempotency WHERE key=?", (op_id,)).fetchone()
+    return {"req_hash": row[0], "event_id": row[1]} if row else None
+
+
+def op_put(conn, op_id: str, req_hash: str, event_id: str) -> None:
+    conn.execute("INSERT OR IGNORE INTO idempotency (key, req_hash, response, at) VALUES (?,?,?,?)",
+                 (op_id, req_hash, event_id, time.time()))
+
+
+def event_by_id(conn, event_id: str):
+    row = conn.execute("SELECT body FROM events WHERE event_id=?", (event_id,)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def missing_ids(conn, ids: list) -> list:
+    """Which of these event ids this node does NOT hold (order preserved)."""
+    have = set()
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        q = ",".join("?" for _ in chunk)
+        have.update(r[0] for r in conn.execute(f"SELECT event_id FROM events WHERE event_id IN ({q})", chunk))
+    return [i for i in ids if i not in have]
 
 
 def events_for(conn, report_id: str) -> list:

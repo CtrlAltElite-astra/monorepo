@@ -28,6 +28,14 @@ def make_settings(tmp_path, **overrides):
     return dataclasses.replace(config.settings, **base)
 
 
+@pytest.fixture(autouse=True)
+def no_dev_keys(tmp_path, monkeypatch):
+    """Tests never see the developer's real keys/ or key registry (run scripts create them).
+    A test that needs keys overrides these two variables (see tests/api/test_carry_and_idempotency.py)."""
+    monkeypatch.setenv("SIGNING_KEYS_DIR", str(tmp_path / "no-keys"))
+    monkeypatch.setenv("PUBLIC_KEYS_FILE", str(tmp_path / "no-registry.json"))
+
+
 @pytest.fixture
 def region(tmp_path, monkeypatch):
     """A freshly initialised region. Yields the DB path."""
