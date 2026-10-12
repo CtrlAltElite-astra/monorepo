@@ -71,6 +71,22 @@ def test_the_v11_contract_documents_every_new_key_endpoint_and_error():
     assert (schemas.MAX_SUPERSEDES, schemas.MAX_CARRY, schemas.MAX_HAS, schemas.MAX_BODY_BYTES) == (16, 200, 500, 512 * 1024)
 
 
+def test_the_v12_contract_documents_scaling_rate_limiting_and_identity_claims():
+    """Section 8 is what four lanes build against: every name in it must stay in the document."""
+    doc = (ROOT / "contracts" / "contracts.md").read_text(encoding="utf-8")
+    assert "## 8. v1.2 additions" in doc
+    for needle in ("RATE_ACTOR_BURST", "RATE_ACTOR_REFILL_PER_S", "REGION_WRITE_LIMIT_PER_S", "POWER",
+                   "rate_actor_burst", "rate_actor_refill_per_s", "region_write_limit_per_s",
+                   '"error": "rate_limited"', '"scope": "actor"', "retry_after_ms", '"error": "overloaded"',
+                   '"error": "claim_required"', "X-RateLimit-Limit", "X-RateLimit-Remaining",
+                   "writes_per_s", "queue_depth", "actor_burst", "actor_refill_per_s", "region_limit_per_s",
+                   "refused_actor", "refused_region", "`blr`", "8004", "subject_key", "has_claim", "is_revoked",
+                   "revoked_credential", '"requires": "age_over_18"'):
+        assert needle in doc, f"contracts.md (v1.2) is missing: {needle}"
+    changelog = (ROOT / "contracts" / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "v1.2" in changelog and "rate_limited" in changelog
+
+
 def test_partner_contract_matches_the_adapter_interface():
     from region.trust import adapter
     doc = (ROOT / "contracts" / "partner-contract.md").read_text(encoding="utf-8")
