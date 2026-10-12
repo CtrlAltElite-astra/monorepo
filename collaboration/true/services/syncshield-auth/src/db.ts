@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 export type ChallengeRow = {
   id: string; nonce: string; audience: string; created_at: number; expires_at: number;
   state: 'pending' | 'verifying' | 'completed' | 'denied' | 'expired'; result_code: string | null;
+  claim: string | null; // contract v1.2: the ONE attribute this challenge asks for, if any
 };
 
 const SCHEMA = `
@@ -30,5 +31,7 @@ export function openAuthDb(path: string): DatabaseSync {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL');
   db.exec(SCHEMA);
+  const cols = db.prepare('PRAGMA table_info(challenges)').all() as { name: string }[];
+  if (!cols.some((c) => c.name === 'claim')) db.exec('ALTER TABLE challenges ADD COLUMN claim TEXT'); // additive
   return db;
 }

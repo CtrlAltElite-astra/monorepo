@@ -17,6 +17,7 @@ SESSION_AUDIENCE = "syncshield"
 SESSION_TOKEN_TYPE = "syncshield-session+jwt"
 SESSION_ISSUER_PREFIX = "syncshield-region:"
 ROLES = ("officer", "supervisor", "admin")
+ATTRIBUTES = ("age_over_18", "member")   # disclosable attributes; mirrors SYNCSHIELD_ATTRIBUTES in syncshield.ts
 MAX_SESSION_SECONDS = 600      # refuse absurdly long tokens even if correctly signed
 
 _ACTOR = re.compile(r"^act_[0-9a-f]{16}$")
@@ -44,6 +45,19 @@ class Session:
     status_ver: int
     status_at: int
     credential_exp: int
+    # Contract v1.2 (C1). `disclosed`: attribute names the shop received at sign-in; `claims`: those proven true.
+    # The session holds these names and nothing else from the credential (no name, no date of birth).
+    claims: tuple = ()
+    disclosed: tuple = ()
+
+
+def _attribute_list(value) -> tuple:
+    """`clm` / `dsc`: absent means none; otherwise a list of distinct known attribute names."""
+    if value is None:
+        return ()
+    if not isinstance(value, list) or len(set(value)) != len(value) or any(v not in ATTRIBUTES for v in value):
+        raise AuthError("malformed_session", "Bad claim list")
+    return tuple(sorted(value))
 
 
 class SessionKeyRegistry:
@@ -137,4 +151,7 @@ class SessionVerifier:
             raise AuthError("malformed_session", "Missing status or credential bounds")
         if exp > cexp:
             raise AuthError("malformed_session", "Session outlives its credential")
-        return Session(sub, role, cid, header["kid"], region, jti, iat, exp, sver, sat, cexp)
+        proven, disclosed = _attribute_list(claims.get("clm")), _attribute_list(claims.get("dsc"))
+        if not set(proven) <= set(disclosed):
+            raise AuthError("malformed_session", "A claim was proven without being disclosed")
+        return Session(sub, role, cid, header["kid"], region, jti, iat, exp, sver, sat, cexp, proven, disclosed)

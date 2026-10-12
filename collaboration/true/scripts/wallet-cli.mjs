@@ -3,12 +3,13 @@
 // this one stores its holder key as a JWK file so tests and demo scripts can act as a user across processes.
 //
 //   node scripts/wallet-cli.mjs claim   --wallet w.json --issuer http://127.0.0.1:4001 --code ABCD2345
-//   node scripts/wallet-cli.mjs login   --wallet w.json --region http://127.0.0.1:8001 [--tamper role]
+//   node scripts/wallet-cli.mjs login   --wallet w.json --region http://127.0.0.1:8001 [--tamper role] [--claim age_over_18]
 //   node scripts/wallet-cli.mjs present --wallet w.json --nonce N --audience A [--claims a,b,c]
+//   node scripts/wallet-cli.mjs holds   --wallet w.json      # every attribute in the credential (what the shopper holds)
 //
 // Output is one JSON document on stdout. A holder private key is never printed.
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { createHolderProof, createPresentation, generateSigningKeyPair } from '@true/credentials';
+import { createHolderProof, createPresentation, generateSigningKeyPair, readCredential } from '@true/credentials';
 import { ISSUER_ID, SYNCSHIELD_CLAIMS } from '@true/shared';
 
 const args = Object.fromEntries(
@@ -68,7 +69,7 @@ if (command === 'claim') {
   const region = String(args.region).replace(/\/$/, '');
   const cred = wallet.credentials.at(-1);
   if (!cred) fail({ error: 'wallet has no credential' });
-  const chRes = await post(`${region}/v1/auth/challenge`, {});
+  const chRes = await post(`${region}/v1/auth/challenge`, args.claim ? { claim: String(args.claim) } : {});
   const ch = await chRes.json();
   if (!chRes.ok) fail({ stage: 'challenge', status: chRes.status, ...ch });
   const claims = args.claims ? String(args.claims).split(',') : ch.required_claims ?? [...SYNCSHIELD_CLAIMS];
@@ -81,6 +82,11 @@ if (command === 'claim') {
   if (!cred) fail({ error: 'wallet has no credential' });
   const claims = args.claims ? String(args.claims).split(',') : [...SYNCSHIELD_CLAIMS];
   out({ ok: true, presentation: await present(wallet, { nonce: args.nonce, audience: args.audience, claims, credential: cred.credential, tamper: args.tamper }) });
+} else if (command === 'holds') {
+  const cred = wallet.credentials.at(-1);
+  if (!cred) fail({ error: 'wallet has no credential' });
+  const { iss, iat, exp, vct, cnf, status, ...claims } = await readCredential(cred.credential);
+  out({ ok: true, claims });
 } else {
   fail({ error: `unknown command ${command}` });
 }

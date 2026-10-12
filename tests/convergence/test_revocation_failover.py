@@ -178,6 +178,7 @@ def test_nothing_secret_leaks_into_events_or_responses(cluster, stack, make_wall
     blob = json.dumps(history) + json.dumps(r.json())
     for secret in (token, "eyJ", "Privacy Officer", "synthetic demo member", "SS-act_", "presentation", "privateJwk"):
         assert secret not in blob, secret
-    # the session response carries exactly the contract fields
+    # the session response carries exactly the contract fields (v1.2 adds claims / disclosed: attribute NAMES only)
     assert set(out) <= {"ok", "status", "token", "expires_at", "actor_id", "role", "credential_id", "auth_mode",
-                        "status_ver", "status_age_s", "region", "challenge_id"}
+                        "status_ver", "status_age_s", "region", "challenge_id", "claims", "disclosed"}
+    assert out["claims"] == [] and out["disclosed"] == []          # an ordinary sign-in reveals no attribute

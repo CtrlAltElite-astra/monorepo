@@ -16,7 +16,7 @@ import { SignJWT, importJWK } from 'jose';
 import type { DatabaseSync } from 'node:sqlite';
 import {
   CHALLENGE_TTL_SECONDS, SESSION_AUDIENCE, SESSION_ISSUER_PREFIX, SESSION_TOKEN_TYPE, SESSION_TTL_SECONDS,
-  STATUS_POLICY, SYNCSHIELD_CLAIMS, SYNCSHIELD_CREDENTIAL_TYPE, SYNCSHIELD_ROLES,
+  STATUS_POLICY, SYNCSHIELD_ATTRIBUTES, SYNCSHIELD_CLAIMS, SYNCSHIELD_CREDENTIAL_TYPE, SYNCSHIELD_ROLES,
 } from '@true/shared';
 import { randomToken, verifyPresentation, type Jwk } from '@true/credentials';
 import type { ChallengeRow } from './db.ts';
@@ -121,15 +121,22 @@ export function createAuthApp(deps: AuthDeps) {
   });
 
   // ---- challenge ----
-  app.post('/internal/v1/challenge', (c) => {
+  // Optional body {claim}: contract v1.2 (C1). Ask for AT MOST ONE extra attribute (e.g. age_over_18 for a restricted
+  // product) on top of the sign-in minimum. The stored challenge, not the caller, later decides what may be disclosed.
+  app.post('/internal/v1/challenge', async (c) => {
+    const raw = await c.req.json().catch(() => ({}));
+    const body = z.object({ claim: z.enum(SYNCSHIELD_ATTRIBUTES).optional() }).safeParse(raw ?? {});
+    if (!body.success) return c.json(refuse('bad_request', `claim must be one of ${SYNCSHIELD_ATTRIBUTES.join(', ')}`), 400);
+    const claim = body.data.claim ?? null;
     const id = randomToken();
     const created = nowS();
-    db.prepare('INSERT INTO challenges (id, nonce, audience, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
-      .run(id, randomToken(), audience, created, created + challengeTtl);
+    db.prepare('INSERT INTO challenges (id, nonce, audience, created_at, expires_at, claim) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, randomToken(), audience, created, created + challengeTtl, claim);
     const row = db.prepare('SELECT * FROM challenges WHERE id = ?').get(id) as ChallengeRow;
     return c.json({
       challenge_id: row.id, nonce: row.nonce, audience: row.audience, expires_at: row.expires_at,
-      required_claims: SYNCSHIELD_CLAIMS, credential_type: SYNCSHIELD_CREDENTIAL_TYPE, issuer_id: issuerId, region,
+      required_claims: claim ? [...SYNCSHIELD_CLAIMS, claim] : SYNCSHIELD_CLAIMS, requested_claim: claim,
+      credential_type: SYNCSHIELD_CREDENTIAL_TYPE, issuer_id: issuerId, region,
     }, 201);
   });
 
@@ -178,11 +185,16 @@ export function createAuthApp(deps: AuthDeps) {
     if (meta.vct !== SYNCSHIELD_CREDENTIAL_TYPE) return deny(401, 'wrong_credential_type', 'Not a SyncShield member credential');
     if (!meta.holderBound) return deny(401, 'missing_holder_binding', 'Credential is not bound to a holder key');
     if (meta.exp === undefined || meta.exp <= nowS()) return deny(401, 'credential_expired', 'The credential has expired');
-    const names = Object.keys(claims).sort();
-    const wanted = [...SYNCSHIELD_CLAIMS].sort();
-    if (names.length !== wanted.length || names.some((n, i) => n !== wanted[i])) {
+    // Exactly the sign-in minimum, plus (optionally) the ONE attribute this challenge asked for. Withholding that
+    // attribute is the holder's right: the session is then simply issued without it. Anything else is refused.
+    const extra = Object.keys(claims).filter((n) => !(SYNCSHIELD_CLAIMS as readonly string[]).includes(n));
+    const minimumShown = SYNCSHIELD_CLAIMS.every((n) => n in claims);
+    if (!minimumShown || extra.length > 1 || (extra.length === 1 && extra[0] !== ch.claim)) {
       return deny(401, 'wrong_claims', 'Exactly the requested claims must be disclosed');
     }
+    const disclosed = extra;                                                  // [] or [ch.claim]
+    if (disclosed.some((n) => typeof claims[n] !== 'boolean')) return deny(401, 'bad_claim', 'attributes are yes/no facts');
+    const proven = disclosed.filter((n) => claims[n] === true);
     const { actor_id, syncshield_member, syncshield_role, credential_id } = claims as Record<string, unknown>;
     if (typeof actor_id !== 'string' || !ACTOR_RE.test(actor_id)) return deny(401, 'bad_claim', 'actor_id is malformed');
     if (typeof credential_id !== 'string' || !CRED_RE.test(credential_id)) return deny(401, 'bad_claim', 'credential_id is malformed');
@@ -207,8 +219,10 @@ export function createAuthApp(deps: AuthDeps) {
     const iat = nowS();
     const exp = Math.min(iat + sessionTtl, meta.exp, snap!.issued_at + STATUS_POLICY.hard);
     const key = await importJWK(sessionKey.privateJwk as never, 'ES256');
+    // clm / dsc: the session records WHICH attributes were proven / disclosed, never the rest of the credential.
     const token = await new SignJWT({
       cid: credential_id, role: syncshield_role, sver: snap!.ver, sat: snap!.issued_at, cexp: meta.exp,
+      clm: proven, dsc: disclosed,
     })
       .setProtectedHeader({ alg: 'ES256', typ: SESSION_TOKEN_TYPE, kid: sessionKey.kid })
       .setIssuer(SESSION_ISSUER_PREFIX + region)
@@ -221,7 +235,7 @@ export function createAuthApp(deps: AuthDeps) {
       .sign(key);
 
     return c.json({
-      token, expires_at: exp, actor_id, role: syncshield_role, credential_id,
+      token, expires_at: exp, actor_id, role: syncshield_role, credential_id, claims: proven, disclosed,
       auth_mode: status.mode, status_ver: snap!.ver, status_age_s: status.age, region,
     }, 200, { 'Cache-Control': 'no-store' });
   });
