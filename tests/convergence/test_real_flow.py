@@ -156,3 +156,61 @@ def test_idempotency_is_bound_to_the_actor(cluster, alice, bob):
     # same actor, changed payload: still rejected
     r4 = create_cart(a["token"], title="different", op_id="op-shared-1", report_id="R-0a0b0c0d")
     assert r4.status_code == 409
+
+
+def _links(admin_token, mode):
+    """Cut or heal the mum<->pun link on BOTH sides (each region enforces its own half)."""
+    for here, there in (("mum", "pun"), ("pun", "mum")):
+        r = C.post(REGION_URL[here] + f"/admin/links/{there}", json={"mode": mode}, headers=bearer(admin_token))
+        assert r.status_code == 200, r.text
+
+
+def test_supervisor_resolves_a_real_conflict_across_regions(cluster, alice, sup, admin):
+    """Concurrent edits made while the regions cannot talk -> review item -> only a supervisor settles it,
+    and the signed decision replicates to the other region."""
+    a, s, ad = login(alice), login(sup), login(admin)
+    cart = create_cart(a["token"], title="conflict cart").json()["report"]["report_id"]
+    until(lambda: C.get(REGION_URL["pun"] + f"/v1/reports/{cart}", headers=bearer(a["token"])).status_code == 200,
+          timeout=15)
+
+    _links(ad["token"], "down")
+    try:
+        # the same member, the same session, two regions that cannot see each other
+        m = C.patch(REGION_URL["mum"] + f"/v1/reports/{cart}", headers=bearer(a["token"]),
+                    json={"field": "assigned_team", "value": "Team Mumbai"})
+        p = C.patch(REGION_URL["pun"] + f"/v1/reports/{cart}", headers=bearer(a["token"]),
+                    json={"field": "assigned_team", "value": "Team Pune"})
+        assert m.status_code == 200 and p.status_code == 200, (m.text, p.text)
+    finally:
+        _links(ad["token"], "up")
+
+    def item(region):
+        r = C.get(REGION_URL[region] + "/v1/review", headers=bearer(s["token"]))
+        return next((i for i in r.json() if i["report_id"] == cart and i["field"] == "assigned_team"), None)             if r.status_code == 200 else None
+
+    both = until(lambda: item("mum") and item("pun"), timeout=25)
+    cands = sorted(c["event_id"] for c in both["receipt"]["candidates"])
+    assert len(cands) == 2
+    # the owner's own queue shows it too, but she cannot settle it herself
+    mine = C.get(REGION_URL["pun"] + "/v1/review", headers=bearer(a["token"])).json()
+    assert any(i["report_id"] == cart for i in mine)
+    body = {"field": "assigned_team", "value": "Team Pune", "candidates": cands, "reason": "closest depot"}
+    assert C.post(REGION_URL["pun"] + f"/v1/reports/{cart}/resolve", json=body, headers=bearer(a["token"])).status_code == 403
+    assert C.post(REGION_URL["pun"] + f"/v1/reports/{cart}/resolve", json=body, headers=bearer(ad["token"])).status_code == 403
+
+    ok = C.post(REGION_URL["pun"] + f"/v1/reports/{cart}/resolve", json=body, headers=bearer(s["token"]))
+    assert ok.status_code == 201, ok.text
+    ev = ok.json()["event"]
+    assert ev["type"] == "RESOLVE" and ev["role"] == "supervisor" and ev["reason"] == "closest depot"
+    assert ev["actor"] != alice.actor_id and ev["sig"]                      # the supervisor, signed by the region
+
+    # the decision reaches the other region: same value, nothing left to review, signature verifies there
+    until(lambda: C.get(REGION_URL["mum"] + f"/v1/reports/{cart}", headers=bearer(a["token"])).json()
+          ["state"].get("assigned_team") == "Team Pune", timeout=20)
+    until(lambda: item("mum") is None and item("pun") is None, timeout=15)
+    hist = C.get(REGION_URL["mum"] + f"/v1/reports/{cart}/history", headers=bearer(a["token"])).json()
+    resolved = [h for h in hist if h["type"] == "RESOLVE"]
+    assert len(resolved) == 1 and resolved[0]["sig_status"] == "verified"
+    # settling it again with the old candidates is refused as stale, and writes nothing
+    again = C.post(REGION_URL["mum"] + f"/v1/reports/{cart}/resolve", json=body, headers=bearer(s["token"]))
+    assert again.status_code == 409 and again.json()["error"] == "stale_edit"
