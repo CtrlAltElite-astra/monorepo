@@ -23,5 +23,15 @@
   },
   "level": "ISOLATED",
   "quarantined": 0,
-  "incomplete_reports": 0
+  "incomplete_reports": 0,
+  "risk": {
+    "unreplicated": 3,
+    "critical_unreplicated": 1,
+    "oldest_age_ms": 47200
+  },
+  "queues": {
+    "P0": 0,
+    "P1": 2,
+    "P2": 1
+  }
 }

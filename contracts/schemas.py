@@ -19,6 +19,17 @@ STATUSES = ("open", "assigned", "resolved", "closed", "cancelled")
 
 PRIORITY_CRITICAL, PRIORITY_NORMAL, PRIORITY_BULK = 0, 1, 2
 
+# Region level shown in /v1/status. HEALTHY/SYNCING/ISOLATED are produced today;
+# CONSTRAINED and RECOVERING (degradation ladder) and OVERLOADED arrive in PDF 2.
+LEVELS = ("HEALTHY", "SYNCING", "CONSTRAINED", "ISOLATED", "RECOVERING", "OVERLOADED")
+
+# Report consistency.replication
+REPLICATION_STATES = ("LOCAL_ONLY", "PARTIAL", "REPLICATED")
+
+# Optional, nullable /v1/status blocks (null until the owning lane fills them in).
+RISK_KEYS = ("unreplicated", "critical_unreplicated", "oldest_age_ms")  # data-at-risk meter
+QUEUE_KEYS = ("P0", "P1", "P2")                                         # pending push per priority lane
+
 # Every key of an event envelope (4.1). "hash" and "sig" are excluded from the hash.
 EVENT_KEYS = (
     "v", "event_id", "origin", "seq", "report_id", "type", "field", "value",

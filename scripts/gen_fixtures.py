@@ -32,6 +32,9 @@ status = {"region": "mum", "schema_version": 1, "policy_version": 0, "heads": {"
           "event_count": 2, "event_digest": "sha256-hex", "state_hash": "sha256-hex",
           "peers": {"pun": {"link": "down", "reachable": False, "last_ok_s": 47.2, "their_heads": {"pun": 2},
                             "last_error": "link_down", "fails": 5}},
-          "level": "ISOLATED", "quarantined": 0, "incomplete_reports": 0}
+          "level": "ISOLATED", "quarantined": 0, "incomplete_reports": 0,
+          # nullable in the live API until Lane B (risk) / Lane D (queues) fill them; sample values for the UI
+          "risk": {"unreplicated": 3, "critical_unreplicated": 1, "oldest_age_ms": 47200},
+          "queues": {"P0": 0, "P1": 2, "P2": 1}}
 (out / "status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
 print("fixtures written")

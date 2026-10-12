@@ -32,4 +32,8 @@ def status():
             "level": snap["level"],
             "quarantined": store.quarantine_count(conn),
             "incomplete_reports": sum(1 for v in views.values() if v["incomplete"]),
+            # Nullable until the owning lane supplies them (contracts.md 4.2). Lane D can add
+            # "risk"/"queues" to state.snapshot() and they flow through with no change here.
+            "risk": snap.get("risk"),
+            "queues": snap.get("queues"),
         }

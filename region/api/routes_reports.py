@@ -1,7 +1,7 @@
 """POST/PATCH/GET /v1/reports (owner: Akshit)."""
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -29,7 +29,7 @@ class CreateReport(BaseModel):
 
 class PatchReport(BaseModel):
     field: str
-    value: Any = None
+    value: Any  # required, but null is allowed (clears assigned_team, location, people_estimate)
     expected: Optional[list[str]] = None
 
 
@@ -113,17 +113,12 @@ def add_note(report_id: str, body: NoteBody, auth=Depends(require_key)):
     return _ok(ev, 201)
 
 
-def _sort_key(report_id: str):
-    parts = report_id.split("-")  # R-<origin>-<seq>
-    return (int(parts[-1]) if parts[-1].isdigit() else 0, parts[1] if len(parts) > 2 else "")
-
-
 @router.get("/reports")
-def list_reports(limit: int = 100, cursor: int = 0):
+def list_reports(limit: int = Query(100, ge=0), cursor: int = Query(0, ge=0)):
+    """Newest first (contracts.md 4.3); `limit` is clamped to 1..500, `cursor` is an offset."""
     with store.read() as conn:
-        ids = sorted(store.all_views(conn), key=_sort_key, reverse=True)
-        page = ids[cursor:cursor + max(1, min(limit, 500))]
-        return [build_report(conn, rid) for rid in page]
+        ids = store.report_ids_newest_first(conn, max(1, min(limit, 500)), cursor)
+        return [build_report(conn, rid) for rid in ids]
 
 
 @router.get("/reports/{report_id}")

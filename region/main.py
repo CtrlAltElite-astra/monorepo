@@ -18,6 +18,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         task.cancel()
+        await asyncio.gather(task, return_exceptions=True)  # let the pull loop stop before the DB closes
         store.close()
 
 

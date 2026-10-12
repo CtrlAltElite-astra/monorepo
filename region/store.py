@@ -178,6 +178,21 @@ def all_views(conn, include_incomplete: bool = False) -> dict:
     return {r[0]: json.loads(r[1]) for r in conn.execute(q)}
 
 
+def report_ids_newest_first(conn, limit: int, offset: int) -> list:
+    """Complete reports, newest CREATE first by (hlc, origin, seq).
+
+    The CREATE event is identical on every region, so every region returns the
+    same order for the same event set (a plain per-origin seq would not be).
+    """
+    rows = conn.execute(
+        "SELECT e.report_id FROM events e JOIN reports r ON r.report_id = e.report_id "
+        "WHERE e.type='CREATE' AND r.incomplete=0 "
+        "ORDER BY e.hlc_l DESC, e.hlc_c DESC, e.origin DESC, e.seq DESC LIMIT ? OFFSET ?",
+        (limit, offset),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
 def report_origin_max(conn, report_id: str) -> dict:
     rows = conn.execute("SELECT origin, MAX(seq) FROM events WHERE report_id=? GROUP BY origin", (report_id,))
     return {r[0]: r[1] for r in rows}
