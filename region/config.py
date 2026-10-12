@@ -47,6 +47,9 @@ class Settings:
     page_size: int
     http_timeout_s: float
     enable_admin: bool
+    push_enabled: bool = True
+    link_rate_bps: int = 0
+    write_batch_ms: int = 0
 
 
 def load() -> Settings:
@@ -64,6 +67,9 @@ def load() -> Settings:
         page_size=int(env("PAGE_SIZE", "200")),
         http_timeout_s=float(env("HTTP_TIMEOUT_S", "1.0")),
         enable_admin=env("ENABLE_ADMIN", "1") == "1",
+        push_enabled=env("PUSH_ENABLED", "1") == "1",
+        link_rate_bps=int(env("LINK_RATE_BPS", "0")),
+        write_batch_ms=int(env("WRITE_BATCH_MS", "0")),
     )
 
 

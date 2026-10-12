@@ -83,16 +83,34 @@ def link_mode(peer: str) -> str:
         return row[0] if row else "up"
 
 
-def set_link_mode(peer: str, mode: str) -> None:
+def get_link(peer: str) -> dict:
+    with store.read() as conn:
+        row = conn.execute("SELECT mode, delay_ms, rate_bps, drop_pct FROM links WHERE peer=?", (peer,)).fetchone()
+        if not row:
+            return {"mode": "up", "delay_ms": 0, "rate_bps": 0, "drop_pct": 0}
+        return {"mode": row[0], "delay_ms": row[1], "rate_bps": row[2], "drop_pct": row[3]}
+
+
+def set_link(peer: str, mode: str, delay_ms: int = 0, rate_bps: int = 0, drop_pct: int = 0) -> None:
     with store.tx() as conn:
         conn.execute(
-            "INSERT INTO links (peer, mode) VALUES (?,?) ON CONFLICT(peer) DO UPDATE SET mode=excluded.mode",
-            (peer, mode),
+            "INSERT INTO links (peer, mode, delay_ms, rate_bps, drop_pct) VALUES (?,?,?,?,?) "
+            "ON CONFLICT(peer) DO UPDATE SET mode=excluded.mode, delay_ms=excluded.delay_ms, "
+            "rate_bps=excluded.rate_bps, drop_pct=excluded.drop_pct",
+            (peer, mode, delay_ms, rate_bps, drop_pct),
         )
+
+
+def set_link_mode(peer: str, mode: str) -> None:
+    set_link(peer, mode)
 
 
 def all_links() -> dict:
     return {p: link_mode(p) for p in config.settings.peers}
+
+
+def all_links_detail() -> dict:
+    return {p: get_link(p) for p in config.settings.peers}
 
 
 # ---- status --------------------------------------------------------------

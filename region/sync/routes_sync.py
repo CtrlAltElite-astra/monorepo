@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from region import config, store
-from region.sync import links, state
+from region.sync import ingest, links, state
 
 router = APIRouter(prefix="/internal/v1/sync", tags=["sync"])
 
@@ -31,3 +31,16 @@ def events(origin: str, after: int = 0, limit: int = Query(200, ge=1, le=200), p
     with store.read() as conn:
         page = store.events_after(conn, origin, after, limit + 1)
     return {"events": page[:limit], "has_more": len(page) > limit}
+
+
+@router.post("/push")
+def push(body: dict, peer: str = Depends(peer_guard)):
+    source = body.get("from", peer)
+    events_list = body.get("events", [])
+    stats = ingest.ingest(events_list, source=source)
+    return {
+        "stored": stats.get("stored", 0),
+        "duplicate": stats.get("duplicate", 0),
+        "rejected": stats.get("rejected_list", []),
+        "heads": state.heads(),
+    }

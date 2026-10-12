@@ -2,14 +2,15 @@
 summary -> for each origin fetch pages after our contiguous watermark -> ingest.
 
 A write never waits for this loop; a dead peer only changes peer_state.
+Push workers run concurrently alongside pull for low-latency delivery.
 """
 import asyncio
 import logging
 
 import httpx
 
-from region import config
-from region.sync import ingest, links, state
+from region import config, store
+from region.sync import ingest, links, push, state
 
 log = logging.getLogger("lifeboat.sync")
 
@@ -23,21 +24,33 @@ async def pull_once(client: httpx.AsyncClient, peer: str, base_url: str) -> None
         state.mark_error(peer, "link_down")
         return
     try:
+        # Check if peer was in an error / isolated state before this pull
+        with store.read() as conn:
+            row = conn.execute("SELECT fails, last_error FROM peer_state WHERE peer=?", (peer,)).fetchone()
+            was_isolated_or_failed = (row and (row[0] > 0 or row[1] is not None))
+
         r = await client.get(f"{base_url}/internal/v1/sync/summary", headers=_headers())
         r.raise_for_status()
         summary = r.json()
         state.save_peer_view(peer, summary["heads"])
+
         for origin, head in summary["heads"].items():
             if origin == config.settings.region:
                 continue  # never import our own history from a peer (seq reuse guard)
             after = state.contiguous(origin)
             while after < head:
+                if links.is_down(peer):
+                    state.mark_error(peer, "link_down")
+                    return
                 r = await client.get(
                     f"{base_url}/internal/v1/sync/events",
                     params={"origin": origin, "after": after, "limit": config.settings.page_size},
                     headers=_headers(),
                 )
                 r.raise_for_status()
+                # Apply throttling if link is slow
+                await links.bucket.throttle(peer, len(r.content))
+
                 events = r.json()["events"]
                 if not events:
                     break
@@ -46,7 +59,13 @@ async def pull_once(client: httpx.AsyncClient, peer: str, base_url: str) -> None
                 if new_after == after:  # gap: retry next round
                     break
                 after = new_after
+
         state.mark_ok(peer)
+
+        # Fast heal: on recovering from partition/error, rebuild unacked push events immediately
+        if was_isolated_or_failed:
+            push.rebuild_unacked(peer)
+
     except httpx.HTTPStatusError as e:
         state.mark_error(peer, f"http_{e.response.status_code}")
     except Exception as e:  # timeout, refused, bad json ...
@@ -58,10 +77,18 @@ async def run_forever() -> None:
     if not peers:
         return
     interval = config.settings.sync_interval_ms / 1000
-    async with httpx.AsyncClient(timeout=config.settings.http_timeout_s) as client:
-        while True:
-            try:
-                await asyncio.gather(*(pull_once(client, p, url) for p, url in peers.items()))
-            except Exception:
-                log.exception("pull round failed")
-            await asyncio.sleep(interval)
+    # Launch push workers in parallel for each peer if push is enabled
+    push_tasks = []
+    if config.settings.push_enabled:
+        push_tasks = [asyncio.create_task(push.push_worker(p, url)) for p, url in peers.items()]
+    try:
+        async with httpx.AsyncClient(timeout=config.settings.http_timeout_s) as client:
+            while True:
+                try:
+                    await asyncio.gather(*(pull_once(client, p, url) for p, url in peers.items()))
+                except Exception:
+                    log.exception("pull round failed")
+                await asyncio.sleep(interval)
+    finally:
+        for t in push_tasks:
+            t.cancel()

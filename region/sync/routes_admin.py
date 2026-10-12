@@ -18,7 +18,10 @@ def admin_guard(auth=Depends(require_key)):
 
 
 class LinkBody(BaseModel):
-    mode: Literal["up", "down"]
+    mode: Literal["up", "down", "slow"]
+    delay_ms: int = 0
+    rate_bps: int = 0
+    drop_pct: int = 0
 
 
 @router.get("/links")
@@ -30,12 +33,14 @@ def get_links(_=Depends(admin_guard)):
 def get_link(peer: str, _=Depends(admin_guard)):
     if peer not in config.settings.peers:
         raise HTTPException(404, "unknown peer")
-    return {"peer": peer, "mode": links.mode(peer)}
+    info = links.get_link_info(peer)
+    return {"peer": peer, **info}
 
 
 @router.post("/links/{peer}")
 def set_link(peer: str, body: LinkBody, _=Depends(admin_guard)):
     if peer not in config.settings.peers:
         raise HTTPException(404, "unknown peer")
-    links.set_mode(peer, body.mode)
-    return {"peer": peer, "mode": links.mode(peer)}
+    links.set_mode(peer, body.mode, delay_ms=body.delay_ms, rate_bps=body.rate_bps, drop_pct=body.drop_pct)
+    info = links.get_link_info(peer)
+    return {"peer": peer, **info}
