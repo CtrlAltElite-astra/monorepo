@@ -12,11 +12,12 @@ Read sections 1 to 3 before touching anything. Section 3 is the to-do list, in o
 |---|---|---|
 | Lane C v1.1 work: shop failover console, failover SDK, chaos agent, Prove-it, Tamper, Delhi node, architecture docs | `main` on GitHub | Merged. Item-by-item status: `docs/lane-c-progress.md` |
 | TRUE integration, backend: partner credential code plus the checks in each region | GitHub branch `lane-c` (`07cfbf0`, `67e522b`) | Pushed and tested. **Off by default** |
+| `main` merged INTO the lane branch (local only, **not pushed**) | local branch `lane/collaboration-true-auth` (merge `0833ce3`, then the demo script and this doc) | Done 2026-10-12. Core 285 passed, TRUE 47 + 59 passed. Waiting for Miti's go-ahead to push |
 | Browser sign-in screen (the wallet) | Local branch `wip/lane-c-browser-wallet` (`65e1719`) | Works in a real browser. **Not pushed** (see Step 2) |
 | Working folder for this branch | `C:\Users\Administrator\Desktop\syncshield-collaboration-true-auth` (git worktree, branch `lane/collaboration-true-auth`) | Clean |
 | Main folder | `C:\Users\Administrator\Desktop\LifeBoat` (branch `main`) | See Step 0 |
 
-**`main` has moved since `lane-c` branched.** Lane A's main build is merged: write path v2, `GET /v1/review`, `POST /v1/reports/{id}/resolve`, roles and `auth_mode` in the event envelope, and a trust adapter interface. Simrit's lane is merged too (`121b1ec`). `lane-c` is 14 commits behind `main`. **Do not open a PR to `main` until Step 1 is done.**
+**`main` had moved since `lane-c` branched.** Lane A's main build is merged there: write path v2, `GET /v1/review`, `POST /v1/reports/{id}/resolve`, roles and `auth_mode` in the event envelope, and a trust adapter interface. Simrit's lane is merged too. The GitHub branch `lane-c` is still the OLD version, 14 commits behind `main`; the up-to-date merge exists only in the local worktree (Step 1 below). **Push and PR only when Miti says so.**
 
 **What the TRUE integration does.** Members sign in with a TRUE credential, the privacy-preserving digital ID from the partner team (SD-JWT VC). The wallet shows only four facts: an opaque member id, "is a member", a role, and a credential id. It does not show name, date of birth, address, photo or student number. The issuer signs the credential, and it is bound to a key that never leaves the browser.
 
@@ -68,9 +69,19 @@ git pull                                # should now say "Already up to date"
 ```
 The untracked `TRUE-main/` folder is not affected.
 
-### Step 1: Merge the latest `main` into `lane-c` (most important)
+### Step 1: Merge the latest `main` into `lane-c` (DONE locally, not pushed)
 
-In the worktree folder:
+**Done on 2026-10-12 as local commit `0833ce3`.** What was decided, so nobody redoes it differently:
+
+- `region/api/writes.py` was taken from `main` whole (Lane A's `WriteResult`, `_append`, `resolve`, op_id check through the event log) and the TRUE parts re-added: `provenance` goes into the event before hashing and signing, a CREATE fixes `owner`, and an op_id is bound to the actor who first used it. `local_write_ex` keeps its old shape for callers.
+- `region/auth.py`: `Auth` is `(actor, role, mode, credential_id)`. Lane A's order is kept and `credential_id` is appended with default `None`, so their code and tests behave as before.
+- `region/api/routes_reports.py` and `routes_review.py`: Lane A's routes and error names (`failure`, `respond`, receipts) with our ownership filters and provenance added.
+- `region/main.py`: Lane A's body limit and CORS, plus `Authorization` in the allowed headers.
+- Test change: the resolve test now expects Lane A's contract (`stale_edit` first, then `no_conflict`).
+
+Still to do from Step 1: show Akshit the diff of `region/api/writes.py`, `region/auth.py` and the two route files, and agree the trust-adapter point below.
+
+Original instructions, kept for reference. In the worktree folder:
 ```bash
 git fetch origin
 git merge origin/main
@@ -147,6 +158,8 @@ Sections 6 to 9 of this file already hold most of the content, so move it across
 - **Revoke command:** add `python scripts/true_stack.py revoke <actor_id>` for the demo. Under the hood it is `Stack.admin("POST", f"/v1/syncshield/members/{actor_id}/revoke", {"reason": "..."})`.
 - **Chaos agent in auth mode:** the admin key is typed into the "Judge tools" box on the sign-in panel and kept in memory only. Check that the agent's CORS allows the `Authorization` header.
 
+**Demo script:** `python scripts/demo_true.py` (add `--pause` to step through with Enter). It is the deterministic demo; run it before presenting.
+
 ### Step 6: Full check, then record the numbers
 
 Run everything in section 5. Write the pass/fail counts into `docs/convergence-true.md`. In auth mode, repeat the T16, T17, T18 and T20 style checks: crash a region mid-write, carry, revocation, and failover latency.
@@ -200,9 +213,14 @@ cd dashboard && npm test && npm run build  # the build must also pass on a fresh
 
 Browser check (auth mode, headless Edge): claim, consent, sign in, shop, a second member cannot see the cart, kill Mumbai, keep shopping.
 
-**Last known results (2026-10-12, before `main` moved):**
-- Node: 59 passed.
-- Region unit: 32 passed. Real-process flows: 15 passed. Core suite: green.
+**Results after merging `main` (2026-10-12, local commit `0833ce3`):**
+- Core suite, auth off: `pytest --ignore=tests/convergence` → **285 passed, 1 expected failure**.
+- TRUE: `pytest tests/convergence` → **47 passed** (32 unit + 15 real-process).
+- Node: `cd collaboration/true && npm test` → **59 passed, 1 todo**.
+- `python scripts/demo_true.py` (own issuer, sidecars and two regions on spare ports) → "All checks passed": forgery and replay refused, ownership and roles, failover with the same token, issuer outage, revocation refused at both regions about 1 s after the revoke.
+- Not rerun after the merge: `dashboard` tests and build, and the browser check below (it is on the wip branch).
+
+**Earlier results (before `main` moved):**
 - Browser check before the crash: 4 writes acknowledged, 4 present, 0 lost.
 - Browser check after killing Mumbai: 7 acknowledged, 7 present, 0 lost, 0 errors shown to shoppers.
 - The second member saw no cart. No API key was sent; all 136 region requests carried a bearer token. Nothing was in localStorage or sessionStorage.
