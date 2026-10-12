@@ -7,6 +7,7 @@ import os
 
 os.environ.setdefault("ENV_FILE", "none")  # never read a developer's .env
 
+import base64  # noqa: E402
 import dataclasses  # noqa: E402
 
 import pytest  # noqa: E402
@@ -15,14 +16,18 @@ from fastapi.testclient import TestClient  # noqa: E402
 from region import config, store  # noqa: E402
 from region.engine import canonical  # noqa: E402
 from region.main import app  # noqa: E402
+from region.trust import keys  # noqa: E402
 
 KEY = {"X-API-Key": "dev-officer"}
+SUP = {"X-API-Key": "dev-supervisor"}
 
 
 def make_settings(tmp_path, **overrides):
     base = dict(
         region="mum", db_path=str(tmp_path / "mum.db"), peers={"pun": "http://127.0.0.1:9"},
-        peer_token="t", api_keys={"dev-officer": ("officer-mum-1", "officer")}, sync_interval_ms=100,
+        peer_token="t", sync_interval_ms=100,
+        api_keys={"dev-officer": ("officer-mum-1", "officer"), "dev-supervisor": ("supervisor-mum-1", "supervisor"),
+                  "dev-admin": ("admin-mum-1", "admin")},
     )
     base.update(overrides)
     return dataclasses.replace(config.settings, **base)
@@ -30,12 +35,17 @@ def make_settings(tmp_path, **overrides):
 
 @pytest.fixture
 def region(tmp_path, monkeypatch):
-    """A freshly initialised region. Yields the DB path."""
+    """A freshly initialised region with its own signing key in a temp folder. Yields the DB path."""
+    monkeypatch.setenv("KEYS_DIR", str(tmp_path / "keys"))
+    monkeypatch.delenv("PUBLIC_KEYS_PATH", raising=False)
+    keys.reset_cache()
     settings = make_settings(tmp_path)
     monkeypatch.setattr(config, "settings", settings)
     store.init()
+    keys.ensure_region_key("mum")
     yield settings.db_path
     store.close()
+    keys.reset_cache()
 
 
 @pytest.fixture
@@ -65,13 +75,20 @@ def create_value(title="Flooded road", severity=3):
 
 
 @pytest.fixture
-def mk_event():
-    """mk_event(origin, seq, type, report_id, ...) -> a well-formed event as a peer would send it."""
-    def _mk(origin, seq, type_, report_id, field=None, value=None, supersedes=(), hlc=None):
+def mk_event(region):
+    """mk_event(origin, seq, type, report_id, ..., signed=False) -> a well-formed event as a peer would send it.
+
+    signed=True signs it with `origin`'s own key (created on demand), exactly as that node would."""
+    def _mk(origin, seq, type_, report_id, field=None, value=None, supersedes=(), hlc=None, op_id=None,
+            observed=None, signed=False, actor=None):
         ev = dict(v=1, event_id=f"{origin}:{seq}", origin=origin, seq=seq, report_id=report_id,
                   type=type_, field=field, value=value, supersedes=list(supersedes),
-                  hlc=list(hlc or (4_000_000_000_000 + seq, 0)), priority=1,
-                  actor=f"officer-{origin}-1", reason=None, wall="2026-10-12T15:00:00+05:30", sig=None)
+                  hlc=list(hlc or (4_000_000_000_000 + seq, 0)), priority=1, op_id=op_id, observed=observed,
+                  actor=actor or f"officer-{origin}-1", role="officer", auth_mode="online", reason=None,
+                  wall="2026-10-12T15:00:00+05:30", sig=None)
         ev["hash"] = canonical.event_hash(ev)
+        if signed:
+            keys.ensure_region_key(origin)
+            ev["sig"] = base64.b64encode(keys.private_key(origin).sign(ev["hash"].encode("ascii"))).decode("ascii")
         return ev
     return _mk

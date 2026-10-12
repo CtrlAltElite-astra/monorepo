@@ -54,9 +54,21 @@ def test_contract_docs_cover_history_roles_and_the_consistency_block():
     for needle in ("GET /v1/reports/{id}/history", "### 3.1 Roles", "### 4.0 Report `consistency` block",
                    "confirmed_by", "awaiting", "stale_possible", "401", "403"):
         assert needle in doc, f"contracts.md is missing: {needle}"
-    # history is implemented now, so it must no longer be listed as reserved
-    reserved = doc.split("Reserved for PDF 2 (do not reuse):")[1].split("###")[0]
-    assert "/history" not in reserved
+    # history, resolve and review are implemented, so none of them may still be listed as reserved
+    reserved = doc.split("Reserved, not built yet (do not reuse):")[1].split("\n\n")[0]
+    for built in ("/history", "/resolve", "/v1/review"):
+        assert built not in reserved
+    assert "/v1/metrics" in reserved
+
+
+def test_the_v11_contract_documents_every_new_key_endpoint_and_error():
+    doc = (ROOT / "contracts" / "contracts.md").read_text(encoding="utf-8")
+    for needle in (*schemas.EVENT_OPTIONAL_KEYS, "Idempotent-Replay", "POST /v1/carry", "POST /v1/events/has", "GET /healthz",
+                   "POST /v1/reports/{id}/resolve", "GET /v1/review", "op_id_reuse", "report_exists", "no_conflict", "stale_edit",
+                   "CORS_ORIGINS", "sig_status", "carried", "cart", "R-[0-9a-f]{8}"):
+        assert needle in doc, f"contracts.md is missing: {needle}"
+    assert "cart" in schemas.CATEGORIES and schemas.AUTH_MODES == ("online", "cached", "stale")
+    assert (schemas.MAX_SUPERSEDES, schemas.MAX_CARRY, schemas.MAX_HAS, schemas.MAX_BODY_BYTES) == (16, 200, 500, 512 * 1024)
 
 
 def test_partner_contract_matches_the_adapter_interface():

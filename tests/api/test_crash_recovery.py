@@ -31,7 +31,8 @@ def free_port() -> int:
 
 def start(db, port) -> subprocess.Popen:
     env = dict(os.environ, REGION="mum", PORT=str(port), DB_PATH=str(db), PEER_TOKEN="t", ENV_FILE="none",
-               API_KEYS="dev-officer:officer-mum-1:officer", PYTHONPATH=str(ROOT))
+               API_KEYS="dev-officer:officer-mum-1:officer", PYTHONPATH=str(ROOT),
+               KEYS_DIR=str(Path(db).parent / "keys"))  # the signing key survives the kill with the database
     env.pop("PEERS", None)  # a single region: nothing to sync with
     return subprocess.Popen(
         [sys.executable, "-m", "uvicorn", "region.main:app", "--host", "127.0.0.1", "--port", str(port),

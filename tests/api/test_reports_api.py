@@ -11,12 +11,13 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from contracts.schemas import EVENT_KEYS
+from contracts.schemas import EVENT_KEYS, EVENT_OPTIONAL_KEYS
 from region import config, store
 from region.api import writes
 from region.engine import canonical
 from region.main import app
 from region.sync import ingest, state
+from region.trust import signing
 
 from conftest import KEY, create_value
 
@@ -65,13 +66,15 @@ def test_201_is_returned_only_after_commit(create, region):
 
 
 def test_stored_event_matches_the_contract_envelope(create, region):
-    create(actor="evil", description="x")  # an actor in the body must be ignored
+    create(actor="evil", description="x", category="cart")  # an actor in the body must be ignored
     (ev,) = stored_events(region)
-    assert set(ev) == set(EVENT_KEYS)
+    assert set(ev) == set(EVENT_KEYS) | set(EVENT_OPTIONAL_KEYS)  # every NEW event carries the v1.1 keys
     assert ev["v"] == 1 and ev["origin"] == "mum" and ev["seq"] == 1 and ev["type"] == "CREATE"
     assert ev["field"] is None and ev["supersedes"] == [] and ev["priority"] == 1
     assert ev["actor"] == "officer-mum-1"  # taken from the API key, never the body
-    assert ev["hash"] == canonical.event_hash(ev) and ev["sig"] is None
+    assert (ev["role"], ev["auth_mode"], ev["op_id"], ev["observed"]) == ("officer", "online", None, None)
+    assert ev["hash"] == canonical.event_hash(ev)
+    assert signing.verify("mum", ev["hash"], ev["sig"])  # signed by this region inside the write transaction
     assert len(ev["hlc"]) == 2 and all(isinstance(x, int) for x in ev["hlc"])
 
 
@@ -328,9 +331,12 @@ def test_history_lists_every_event_in_hlc_order_with_supersedes(create, client, 
     assert by_id["mum:2"]["actor"] == "officer-mum-1" and by_id["mum:3"]["type"] == "NOTE"
     clocks = [(e["hlc"][0], e["hlc"][1], e["origin"], e["seq"]) for e in events]
     assert clocks == sorted(clocks)
-    for e in events:  # exactly what was stored: every hash still verifies
-        assert e["hash"] == canonical.event_hash(e)
-    assert events == sorted(stored_events(region), key=lambda e: (e["hlc"][0], e["hlc"][1], e["origin"], e["seq"]))
+    for e in events:  # exactly what was stored plus two audit columns: every hash still verifies
+        assert e["hash"] == canonical.event_hash({k: v for k, v in e.items() if k not in ("sig_status", "carried")})
+    assert [e["sig_status"] for e in events] == ["unsigned", "verified", "verified", "verified"]  # pun:1 was unsigned
+    assert [e["carried"] for e in events] == [False] * 4
+    plain = [{k: v for k, v in e.items() if k not in ("sig_status", "carried")} for e in events]
+    assert plain == sorted(stored_events(region), key=lambda e: (e["hlc"][0], e["hlc"][1], e["origin"], e["seq"]))
 
 
 def test_history_of_an_unknown_report_is_404(client):
@@ -385,8 +391,8 @@ def test_a_hung_peer_does_not_slow_or_fail_writes(region, monkeypatch):
 
 
 def test_local_write_function_is_independent_of_the_http_layer(region):
-    ev = writes.local_write(None, "CREATE", None, create_value("direct"), "officer-mum-1")
-    assert ev["event_id"] == "mum:1" and ev["report_id"] == "R-mum-1"
+    result = writes.local_write(None, "CREATE", None, create_value("direct"), "officer-mum-1")
+    assert result.event["event_id"] == "mum:1" and result.event["report_id"] == "R-mum-1" and not result.replay
     with pytest.raises(writes.NotFound):
         writes.local_write("R-nope-1", "NOTE", None, {"text": "x"}, "a")
     with pytest.raises(writes.StaleEdit) as e:
