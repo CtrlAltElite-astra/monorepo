@@ -12,15 +12,24 @@ POLICY_VERSION = 0
 
 
 def order(e: dict):
+    """Tie-break order (hlc_l, hlc_c, origin, seq). Total, because (origin, seq) is unique."""
     return (e["hlc"][0], e["hlc"][1], e["origin"], e["seq"])
 
 
 def _fval(e: dict, f: str):
+    """Value of field f in e: a CREATE carries all initial fields, a SET/RESOLVE one."""
     return e["value"][f] if e["type"] == "CREATE" else e["value"]
 
 
 def derive(events) -> dict:
-    """events: all events of ONE report, any order, duplicates allowed."""
+    """events: all events of ONE report, any order, duplicates allowed.
+
+    Returns {"state": {field: value, ..., "notes": [{"id", "text"}]},
+             "live": {field: [event_id, ...]},  # values nobody superseded, in tie-break order
+             "conflicts": [{"field", "values", "event_ids", "rule", "needs_review"}],
+             "incomplete": True until the CREATE has arrived,
+             "policy_version": POLICY_VERSION}
+    """
     evs = list({e["event_id"]: e for e in events}.values())
     view = {
         "state": {},
