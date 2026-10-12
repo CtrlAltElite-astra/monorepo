@@ -196,16 +196,15 @@ const okRes = (status: number, body: any, headers: Record<string, string> = {}):
 const ev = (origin: string, seq: number) => ({ event_id: `${origin}:${seq}`, origin, seq, report_id: CART, type: 'NOTE' })
 
 describe('backpressure, carry support and the outbox limits', () => {
-  it('503 with Retry-After waits, then moves on to the next node (and shows the shopper no error)', async () => {
+  it('503 with Retry-After moves on to the next node at once, without waiting (and shows the shopper no error)', async () => {
     vi.useFakeTimers()
     const t = new Stub((r, _m, p) => p === '/healthz' ? okRes(200, { ok: true, level: 'HEALTHY' }) : r === 'mum' ? okRes(503, null, { 'retry-after': '1' }) : okRes(201, { event: ev('pun', 1) }))
     const client = new SyncShieldClient(t, { preferred: 'mum' })
-    const p = client.call('POST', '/v1/reports', { title: 'x' })
-    await vi.advanceTimersByTimeAsync(1100)
-    const res = await p
+    const res = await client.call('POST', '/v1/reports', { title: 'x' }) // no timer is advanced: nothing sleeps through the Retry-After
     expect(res.status).toBe(201)
     expect(client.getState().timeline.at(-1)).toMatchObject({ region: 'pun', tried: 1, failedOn: ['mum'] })
     expect(client.getState().counters.errors).toBe(0)
+    expect(client.getState().regions.find((r) => r.id === 'mum')!.busyUntil).toBeGreaterThan(Date.now()) // avoided until the Retry-After has passed
   })
 
   it('a node with no /healthz is probed through /v1/health instead of being called down', async () => {

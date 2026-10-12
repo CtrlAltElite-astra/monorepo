@@ -1,17 +1,32 @@
 // The in-browser simulator of three SyncShield nodes (MOCK MODE). It is a fake BACKEND: it speaks the same REST
 // paths as the real regions (see sim/api.ts), so the SDK and the UI run unchanged against it. Everything on
 // screen in mock mode carries a "demo data" chip.
-import type { EventEnvelope, Level, RegionId } from '../api/types'
+import type { EventEnvelope, Level, Power, RegionId } from '../api/types'
 import { canonical, clamp } from '../lib/util'
 import { eventHash, sign, verify } from './crypto'
 import { derive, order, type Derived } from './derive'
 
-export const REGION_NAMES: Record<RegionId, string> = { mum: 'Mumbai', pun: 'Pune', del: 'Delhi' }
-export const ALL_REGIONS: RegionId[] = ['mum', 'pun', 'del']
+export const REGION_NAMES: Record<RegionId, string> = { mum: 'Mumbai', pun: 'Pune', del: 'Delhi', blr: 'Bengaluru' }
+/** every region the simulator knows how to run; Bengaluru is configured but only joins when someone adds it (contract 8.2) */
+export const ALL_REGIONS: RegionId[] = ['mum', 'pun', 'del', 'blr']
+/** the regions a fresh mesh starts with */
+export const CORE_REGIONS: RegionId[] = ['mum', 'pun', 'del']
 
-/** one-way delivery latency per pair, ms (geography: Mumbai-Pune close, Delhi far) */
-const LATENCY: Record<string, number> = { 'mum-pun': 450, 'pun-del': 700, 'del-mum': 1100 }
+/** one-way delivery latency per pair, ms (geography: Mumbai-Pune close, Delhi far, Bengaluru in the south) */
+const LATENCY: Record<string, number> = { 'mum-pun': 450, 'pun-del': 700, 'del-mum': 1100, 'blr-mum': 650, 'blr-pun': 600, 'blr-del': 1250 }
 export const latencyOf = (a: string, b: string) => LATENCY[[a, b].sort().join('-')] ?? LATENCY[[b, a].join('-')] ?? 600
+
+// ---- power and the commit queue (contract 8.1, 8.4) --------------------------------------------------------------
+/** writes saved per batch for each power preset */
+export const POWER_BATCH: Record<Power, number> = { low: 1, medium: 8, high: 32 }
+/** One commit costs a fixed amount (the fsync) plus a little per write, so a bigger batch is cheaper per write but never free:
+ *  throughput climbs steeply from low to medium and then flattens. These are simulated costs, not measurements. */
+export const COMMIT_FIXED_MS = 12
+export const COMMIT_PER_WRITE_MS = 1.5
+/** time the commit loop spends per write when batches are full */
+export const serviceMs = (batch: number) => (COMMIT_FIXED_MS + COMMIT_PER_WRITE_MS * batch) / batch
+
+export interface TokenDecision { allowed: boolean; limit: number; remaining: number; retryAfterMs: number }
 
 export interface SimOptions {
   /** nodes that are part of the mesh at the start; the others can join later (Delhi joins empty) */
@@ -65,12 +80,90 @@ export class SimNode {
   eventsAtRecoveryStart = 0
   lastHeal: HealSummary | null = null
   lastCatchUpMs: number | null = null
+
+  // ---- scaling and limits (all off or "medium" until someone changes them, like the real settings) ------------
+  power: Power = 'medium'
+  /** per-actor token bucket: `actorBurst` tokens, `actorRefill` more per second; 0 burst = off */
+  actorBurst = 0
+  actorRefill = 1
+  /** writes this region accepts per second from clients; 0 = off */
+  regionLimit = 0
+  refusedActor = 0
+  refusedRegion = 0
+  private buckets = new Map<string, { tokens: number; at: number }>()
+  private acceptedAt: number[] = []
+  private busyUntil = 0
+  private pending: number[] = []
+
   private cache = new Map<string, { n: number; view: Derived }>()
   private version = 0
 
   constructor(public id: RegionId) {}
 
   bump() { this.version++ }
+
+  // ---- the per-actor limit: the same bucket as region/api/ratelimit.py -------------------------------------------
+  private tokensOf(actor: string, now: number): number {
+    const b = this.buckets.get(actor)
+    return b ? Math.min(this.actorBurst, b.tokens + Math.max(0, now - b.at) / 1000 * this.actorRefill) : this.actorBurst
+  }
+
+  /** Spend one token of `actor`. null while the limit is off. */
+  takeToken(actor: string, now: number): TokenDecision | null {
+    if (this.actorBurst <= 0) { this.buckets.clear(); return null }
+    let tokens = this.tokensOf(actor, now)
+    if (tokens >= 1 - 1e-9) {
+      tokens = Math.max(0, tokens - 1)
+      this.buckets.set(actor, { tokens, at: now })
+      return { allowed: true, limit: this.actorBurst, remaining: Math.floor(tokens + 1e-9), retryAfterMs: 0 }
+    }
+    this.buckets.set(actor, { tokens, at: now })
+    this.refusedActor++
+    return { allowed: false, limit: this.actorBurst, remaining: 0, retryAfterMs: Math.max(1, Math.ceil((1 - tokens) / this.actorRefill * 1000)) }
+  }
+
+  /** The actor's allowance without spending anything (a replayed write carries it). */
+  peekToken(actor: string, now: number): TokenDecision | null {
+    if (this.actorBurst <= 0) return null
+    return { allowed: true, limit: this.actorBurst, remaining: Math.floor(this.tokensOf(actor, now) + 1e-9), retryAfterMs: 0 }
+  }
+
+  // ---- the region limit: writes accepted from clients in the last second -----------------------------------------
+  /** Whole seconds a client should wait when the region is at its limit; 0 when it can take the write. */
+  regionRetryS(now: number): number {
+    if (this.regionLimit <= 0) return 0
+    const recent = this.acceptedAt.filter((t) => now - t < 1000)
+    if (recent.length < this.regionLimit) return 0
+    return Math.max(1, Math.ceil((Math.min(...recent) + 1000 - now) / 1000))
+  }
+
+  noteAccepted(now: number) {
+    this.acceptedAt.push(now)
+    if (this.acceptedAt.length > 4000 || (this.acceptedAt[0] ?? now) < now - 5000) this.acceptedAt = this.acceptedAt.filter((t) => now - t < 3000)
+  }
+
+  // ---- the commit queue: how power changes what a burst feels like -----------------------------------------------
+  /** Queue one write for commit; returns how long its acknowledgement is held back (ms). An idle region costs one whole
+   *  commit, whatever the power; a busy one makes each write wait for the ones ahead of it. */
+  commit(now: number): number {
+    const batch = POWER_BATCH[this.power]
+    const svc = serviceMs(batch)
+    const start = Math.max(now, this.busyUntil)
+    const wait = start - now
+    this.busyUntil = start + svc
+    this.pending.push(this.busyUntil)
+    return wait + svc + (wait === 0 ? COMMIT_FIXED_MS * (1 - 1 / batch) : 0)
+  }
+
+  queueDepth(now: number): number {
+    if (this.pending.length && this.pending[0] <= now) this.pending = this.pending.filter((t) => t > now)
+    return this.pending.length
+  }
+
+  /** accepted client writes per second over the last two seconds */
+  writesPerS(now: number): number {
+    return Math.round(this.acceptedAt.filter((t) => now - t < 2000).length / 2 * 10) / 10
+  }
 
   view(reportId: string): Derived {
     const hit = this.cache.get(reportId)
@@ -138,7 +231,7 @@ export class SimWorld {
   private listeners = new Set<() => void>()
 
   constructor(opts: SimOptions = {}) {
-    this.joined = [...(opts.joined ?? ALL_REGIONS)]
+    this.joined = [...(opts.joined ?? CORE_REGIONS)]
     this.tickMs = opts.tickMs ?? 100
     this.pullMs = opts.pullMs ?? 1000
     this.isolateAfterMs = opts.isolateAfterMs ?? 1500
@@ -155,7 +248,7 @@ export class SimWorld {
   stop() { if (this.timer) clearInterval(this.timer); this.timer = null }
 
   // ---- membership and process control -------------------------------------------------------------
-  /** Delhi joins as an EMPTY node and catches up by replication (A10). */
+  /** A new region (Delhi, or Bengaluru) joins as an EMPTY node and catches up by replication (A10, contract 8.2). */
   join(id: RegionId) {
     if (this.joined.includes(id)) return
     this.joined.push(id)
