@@ -1,12 +1,23 @@
-"""The local write path (owner: Akshit, engine calls by Rahil).
+"""The local write path v2 (owner: Akshit; engine calls by Rahil).
 
-Always local, always durable before the caller sees 201. Never calls a peer.
+Always local, always durable before the caller sees a 2xx. Never calls a peer.
+Every event is hashed and signed by THIS region inside the write transaction (PDF 6.1):
+
+  op_id        client UUID. A retry carrying the same op_id never creates a second event: the node
+               replays the original event (also when that event arrived by replication or carry).
+               Same op_id with a different body is refused (OpIdReuse).
+  report_id    a client-chosen "R-" + 8 hex for carts; otherwise the server makes R-<region>-<seq>.
+  observed     the evidence a close / new-info write had seen (CLOSE_VS_NEW_INFO, PDF 6.7).
 """
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Optional
 
 from region import config, store
 from region.engine import canonical, hlc
 from region.engine.derive import derive
+from region.trust import signing
+
 
 class NotFound(Exception):
     pass
@@ -17,30 +28,141 @@ class StaleEdit(Exception):
         self.live = live
 
 
+class OpIdReuse(Exception):
+    """The same op_id was already used for a different request."""
+
+
+class ReportExists(Exception):
+    """A CREATE named a client report_id that already exists here."""
+
+
+class NoConflict(Exception):
+    """resolve() was asked to settle a field that has nothing to settle."""
+
+
+@dataclass(frozen=True)
+class WriteResult:
+    event: dict
+    replay: bool = False  # True: an earlier write with the same op_id was returned, nothing new stored
+
+
+_loop = None  # the server's event loop, set by main.py; lets a worker thread hand an event to the push queue
+
+
+def set_loop(loop) -> None:
+    global _loop
+    _loop = loop
+
+
 def _wall() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-def local_write(report_id, type_, field, value, actor, expected=None) -> dict:
-    """Append one event and refresh the report view in the same transaction."""
+def _priority(ev: dict) -> int:
+    """0 critical / 1 normal / 2 bulk (PDF 4.2). One classifier for the whole system: Lane D's push queue
+    already uses this one. Lane B's engine.priority.classify can replace this single call when it lands."""
+    from region.sync.push import classify_priority
+    return classify_priority(ev)
+
+
+def _observed(conn, report_id: str, type_: str, field: Optional[str], value) -> Optional[list]:
+    """Evidence for CLOSE_VS_NEW_INFO. A status write to closed/cancelled lists the NOTE and severity events
+    this node had; a NOTE or severity write lists the live status events this node had; others carry none."""
+    status_write = type_ in ("SET", "RESOLVE") and field == "status"
+    if status_write and value in ("closed", "cancelled"):
+        notes = [e["event_id"] for e in store.events_for(conn, report_id) if e["type"] == "NOTE"]
+        return sorted(set(notes) | set(store.live_ids(conn, report_id, "severity")))
+    if type_ == "NOTE" or (type_ in ("SET", "RESOLVE") and field == "severity"):
+        return sorted(store.live_ids(conn, report_id, "status"))
+    return None
+
+
+def _same_request(prior: dict, type_: str, report_id: Optional[str], field: Optional[str], value) -> bool:
+    """Is this request the one that produced `prior`? (op_id reuse check; compares what the event stores)"""
+    return (prior["type"] == type_ and prior.get("field") == field and prior["value"] == value
+            and (report_id is None or prior["report_id"] == report_id))
+
+
+def _append(conn, *, report_id, type_, field, value, actor, role, auth_mode, op_id, supersedes, reason=None) -> dict:
+    """Build, hash, sign and store one event and refresh its report view. Caller holds store.tx()."""
     region = config.settings.region
+    seq = store.next_seq(conn)
+    if type_ == "CREATE" and report_id is None:
+        report_id = f"R-{region}-{seq}"
+    h = hlc.tick(store.load_hlc(conn), store.now_ms())
+    store.save_hlc(conn, h)
+    ev = dict(
+        v=1, event_id=f"{region}:{seq}", origin=region, seq=seq, report_id=report_id,
+        type=type_, field=field, value=value, supersedes=supersedes, hlc=[h[0], h[1]],
+        priority=1, op_id=op_id, observed=_observed(conn, report_id, type_, field, value),
+        actor=actor, role=role, auth_mode=auth_mode, reason=reason, wall=_wall(), sig=None,
+    )
+    ev["priority"] = _priority(ev)
+    ev["hash"] = canonical.event_hash(ev)
+    ev["sig"] = signing.sign(ev["hash"])
+    store.insert_event(conn, ev)
+    store.save_view(conn, report_id, derive(store.events_for(conn, report_id)))
+    return ev
+
+
+def _after_commit(ev: dict) -> None:
+    """Hand the committed event to the push queue. Best effort: the log is the outbox, pull repairs any loss."""
+    loop = _loop
+    if loop is None or not config.settings.push_enabled:
+        return
+    try:
+        from region.sync import push
+        loop.call_soon_threadsafe(push.enqueue, ev)
+    except Exception:
+        pass
+
+
+def local_write(report_id, type_, field, value, actor, expected=None, *, op_id=None,
+                role="officer", auth_mode="online") -> WriteResult:
+    """Append one event and refresh the report view in the same transaction."""
     with store.tx() as conn:
-        if type_ != "CREATE" and not store.report_exists(conn, report_id):
-            raise NotFound(report_id)
-        live = store.live_ids(conn, report_id, field) if (field and type_ != "CREATE") else []
+        if op_id:
+            prior = store.event_by_op(conn, op_id)
+            if prior is not None:  # same operation seen here already (written here, replicated or carried)
+                if not _same_request(prior, type_, report_id, field, value):
+                    raise OpIdReuse(op_id)
+                return WriteResult(prior, replay=True)
+        if type_ == "CREATE":
+            if report_id is not None and store.report_exists(conn, report_id):
+                raise ReportExists(report_id)
+            live = []
+        else:
+            if not store.report_exists(conn, report_id):
+                raise NotFound(report_id)
+            live = store.live_ids(conn, report_id, field) if field else []
         if expected is not None and sorted(expected) != sorted(live):
             raise StaleEdit(live)
-        seq = store.next_seq(conn)
-        if type_ == "CREATE":
-            report_id = f"R-{region}-{seq}"
-        h = hlc.tick(store.load_hlc(conn), store.now_ms())
-        store.save_hlc(conn, h)
-        ev = dict(
-            v=1, event_id=f"{region}:{seq}", origin=region, seq=seq, report_id=report_id,
-            type=type_, field=field, value=value, supersedes=live, hlc=[h[0], h[1]],
-            priority=1, actor=actor, reason=None, wall=_wall(), sig=None,
-        )
-        ev["hash"] = canonical.event_hash(ev)
-        store.insert_event(conn, ev)
-        store.save_view(conn, report_id, derive(store.events_for(conn, report_id)))
-    return ev  # committed
+        ev = _append(conn, report_id=report_id, type_=type_, field=field, value=value, actor=actor,
+                     role=role, auth_mode=auth_mode, op_id=op_id, supersedes=live)
+    _after_commit(ev)
+    return WriteResult(ev)
+
+
+def resolve(report_id, field, value, candidates, reason, actor, *, role="supervisor", auth_mode="online",
+            op_id=None) -> WriteResult:
+    """A supervisor settles a conflicted field (PDF 6.7). The RESOLVE event supersedes exactly the live
+    candidates and replicates like any event; it never hides an edit it did not see."""
+    with store.tx() as conn:
+        if op_id:
+            prior = store.event_by_op(conn, op_id)
+            if prior is not None:
+                if not (prior["type"] == "RESOLVE" and prior.get("field") == field and prior["value"] == value):
+                    raise OpIdReuse(op_id)
+                return WriteResult(prior, replay=True)
+        if not store.report_exists(conn, report_id):
+            raise NotFound(report_id)
+        live = store.live_ids(conn, report_id, field)
+        if sorted(live) != sorted(candidates):
+            raise StaleEdit(live)  # it changed while the supervisor was looking
+        view = derive(store.events_for(conn, report_id))
+        if field not in [c["field"] for c in view["conflicts"]]:
+            raise NoConflict(field)
+        ev = _append(conn, report_id=report_id, type_="RESOLVE", field=field, value=value, actor=actor,
+                     role=role, auth_mode=auth_mode, op_id=op_id, supersedes=live, reason=reason)
+    _after_commit(ev)
+    return WriteResult(ev)
