@@ -1,5 +1,15 @@
-"""Event builder for tests, fixtures and examples (owner: Rahil). Pure."""
-from region.engine import canonical
+"""A node in memory (owner: Rahil). Pure: no storage, no network, the caller supplies the clock.
+
+Replica follows the same write and receive rules as the real region, built only
+from engine functions. The convergence fuzz test runs three of them, and the
+example fixtures are made with it. region/api/writes.py must fill supersedes,
+observed, priority and sig the same way.
+"""
+from datetime import datetime, timezone
+
+from contracts.schemas import validate_field
+from region.engine import canonical, digest, hlc, policy, priority, signing
+from region.engine.derive import derive, well_formed
 
 
 def make_event(origin, seq, type_, field=None, value=None, supersedes=(), hlc=None, report_id="R-1", **extra) -> dict:
@@ -13,3 +23,76 @@ def make_event(origin, seq, type_, field=None, value=None, supersedes=(), hlc=No
     ev.update(extra)
     ev["hash"] = canonical.event_hash(ev)
     return ev
+
+
+class Replica:
+    def __init__(self, region: str, private_key=None):
+        self.region, self.private_key = region, private_key  # with a key, every event it writes is signed
+        self.events, self.seq, self.clock = {}, 0, (0, 0)
+
+    def of(self, report_id: str) -> list:
+        return [e for e in self.events.values() if e["report_id"] == report_id]
+
+    def view(self, report_id: str) -> dict:
+        return derive(self.of(report_id))
+
+    def views(self) -> dict:
+        return {rid: self.view(rid) for rid in sorted({e["report_id"] for e in self.events.values()})}
+
+    def event_digest(self) -> str:
+        return digest.event_digest((i, e["hash"]) for i, e in self.events.items())
+
+    def state_hash(self) -> str:
+        return digest.state_hash(self.views())
+
+    def write(self, now_ms: int, type_: str, report_id: str, field=None, value=None, op_id=None,
+              reason=None, bulk=False) -> dict:
+        """A local write: one new event, built the way the write path builds it.
+
+        An op_id this node already holds (applied here, or arrived from a peer) is not written
+        again: the existing event is returned.
+        """
+        if op_id:
+            for e in self.events.values():
+                if e.get("op_id") == op_id:
+                    return e
+        if type_ in ("SET", "RESOLVE"):
+            value = validate_field(field, value)
+        if type_ != "CREATE" and not self.of(report_id):
+            raise KeyError(report_id)
+        before = self.view(report_id)
+        self.seq += 1
+        self.clock = hlc.tick(self.clock, now_ms)
+        extra = {}
+        observed = policy.observed_for(type_, field, value, before)
+        if observed is not None:
+            extra["observed"] = observed
+        ev = make_event(
+            self.region, self.seq, type_, field, value,
+            supersedes=before["live"].get(field, []) if type_ in ("SET", "RESOLVE") else [],
+            hlc=self.clock, report_id=report_id, op_id=op_id, reason=reason,
+            priority=priority.classify({"type": type_, "field": field, "value": value}, before, bulk),
+            wall=datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc).isoformat(timespec="seconds"), **extra)
+        if self.private_key:
+            ev["sig"] = signing.sign_with(self.private_key, ev["hash"])
+        self.events[ev["event_id"]] = ev
+        return ev
+
+    def receive(self, events, now_ms: int, public_keys=None) -> list:
+        """Events from a peer or from a browser's outbox, checked the way ingest checks them.
+
+        Skipped: a malformed event, a hash that does not match, an id already held. With
+        public_keys (the rule for /v1/carry) an event must also carry its origin's signature.
+        Returns the ids that were new.
+        """
+        new = []
+        for ev in events:
+            if not well_formed(ev) or ev["event_id"] in self.events or canonical.event_hash(ev) != ev.get("hash"):
+                continue
+            if public_keys is not None and not signing.verify_with(
+                    public_keys.get(ev["origin"], ""), ev["hash"], ev.get("sig")):
+                continue
+            self.events[ev["event_id"]] = ev
+            self.clock = hlc.receive(self.clock, tuple(ev["hlc"]), now_ms)
+            new.append(ev["event_id"])
+        return new

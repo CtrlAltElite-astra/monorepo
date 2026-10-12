@@ -4,11 +4,13 @@ The result depends only on the set, never on arrival order or duplicates. For
 each field the writes that nobody replaced are live. If they disagree that is a
 conflict: policy.py picks the value shown meanwhile and derive() records a
 receipt with every candidate and the rule used. Copies of one client write
-(same op_id) count once.
+(same op_id) count once. An order placed without seeing a new item gets a
+review receipt too (CLOSE_VS_NEW_INFO). docs/conflict-policy.md has the rules.
 """
 from contracts.schemas import FIELDS
 from region.engine import canonical
-from region.engine.policy import POLICY_V1, POLICY_VERSION  # noqa: F401  (/v1/status reads POLICY_VERSION here)
+from region.engine.policy import CLOSE_STATUSES, CRITICAL_SEVERITY, POLICY_V1, is_number
+from region.engine.policy import POLICY_VERSION  # noqa: F401  (/v1/status reads it from here)
 
 
 def order(e: dict):
@@ -75,6 +77,37 @@ def _first_copies(groups: dict, evs) -> list:
     return [e for e in evs if groups.get(e["event_id"], (e["event_id"],))[0] == e["event_id"]]
 
 
+def _saw(copies: list, ids) -> bool:
+    """True when every copy of one write lists some copy of the other in its observed key."""
+    def observed(e):
+        return e["observed"] if isinstance(e.get("observed"), list) else []
+    return all(any(i in observed(c) for i in ids) for c in copies)
+
+
+def _new_info(status: list, severity: list, notes: list, groups: dict, by_id: dict) -> list:
+    """CLOSE_VS_NEW_INFO: cart activity and delivery speed of 4 or more that a live close
+    (order placed, cancelled) did not see and that did not see the close. Oldest first.
+
+    status, severity: the live [(event, value)]; notes: the NOTE events. A retried write
+    saw something only if every copy of it did. A close counts only when its copies carry
+    an observed list, so events from a writer that records none never raise a false alarm.
+    """
+    def ids(e):
+        return groups.get(e["event_id"], (e["event_id"],))
+
+    def copies(e):
+        return [by_id[i] for i in ids(e)]
+
+    closes = [e for e, v in status
+              if v in CLOSE_STATUSES and all(isinstance(c.get("observed"), list) for c in copies(e))]
+    info = notes + [e for e, v in severity if is_number(v) and v >= CRITICAL_SEVERITY]
+    return sorted(
+        (i for i in info
+         if any(i["event_id"] not in ids(c) and not _saw(copies(c), ids(i)) and not _saw(copies(i), ids(c))
+                for c in closes)),
+        key=order)
+
+
 def _receipt(field: str, pairs: list, value, rule: str, review: bool, flags: list, version: int) -> dict:
     """What a conflict looked like and how it was settled (plan 6.7).
 
@@ -104,8 +137,10 @@ def derive(events, policy=POLICY_V1) -> dict:
              "incomplete": True until the CREATE has arrived,
              "policy_version": policy.version}
     """
-    evs = list({e["event_id"]: e for e in events if well_formed(e)}.values())
+    by_id = {e["event_id"]: e for e in events if well_formed(e)}
+    evs = list(by_id.values())
     groups = op_groups(evs)
+    notes = [e for e in _first_copies(groups, sorted(evs, key=order)) if e["type"] == "NOTE"]
     live = {}
     for f in FIELDS:
         cands = [
@@ -122,16 +157,24 @@ def derive(events, policy=POLICY_V1) -> dict:
         "incomplete": not any(e["type"] == "CREATE" for e in evs),
         "policy_version": policy.version,
     }
+    unseen = _new_info(live["status"], live["severity"], notes, groups, by_id)
     for f in FIELDS:
         values = [v for _, v in live[f]]
+        rule, review, flags = None, False, []
         if len({canonical.dumps(v) for v in values}) > 1:
             value, rule, review, flags = policy.resolve(f, live[f])
-            view["conflicts"].append(_receipt(f, live[f], value, rule, review, flags, policy.version))
         else:
             value = values[-1] if values else None  # one value, or several equal ones: not a conflict
+        if f == "status" and unseen:  # the status stays as derived; a supervisor has to look
+            rule, review, flags = rule or "CLOSE_VS_NEW_INFO", True, flags + ["CLOSE_VS_NEW_INFO"]
+        if rule:
+            receipt = _receipt(f, live[f], value, rule, review, flags, policy.version)
+            if f == "status" and unseen:
+                receipt["new_info"] = [
+                    {"event_id": e["event_id"], "kind": "NOTE" if e["type"] == "NOTE" else "SEVERITY",
+                     "value": e["value"]["text"] if e["type"] == "NOTE" else _fval(e, "severity"),
+                     "origin": e["origin"], "actor": e.get("actor"), "wall": e.get("wall")} for e in unseen]
+            view["conflicts"].append(receipt)
         view["state"][f] = value
-    view["state"]["notes"] = [
-        {"id": e["event_id"], "text": e["value"]["text"]}
-        for e in _first_copies(groups, sorted(evs, key=order)) if e["type"] == "NOTE"
-    ]
+    view["state"]["notes"] = [{"id": e["event_id"], "text": e["value"]["text"]} for e in notes]
     return view

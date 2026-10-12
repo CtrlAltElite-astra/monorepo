@@ -1,0 +1,138 @@
+{
+  "about": "Bob's add was retried on Pune with the same op_id after Mumbai died. Two events, one item, no conflict.",
+  "events": [
+    {
+      "v": 1,
+      "event_id": "mum:1",
+      "origin": "mum",
+      "seq": 1,
+      "report_id": "R-b0b00002",
+      "type": "CREATE",
+      "field": null,
+      "value": {
+        "title": "Bob",
+        "description": "",
+        "category": "cart",
+        "severity": 1,
+        "status": "open",
+        "assigned_team": null,
+        "location": null,
+        "people_estimate": null
+      },
+      "supersedes": [],
+      "hlc": [
+        1791813000000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "bob-1",
+      "actor": "agent-mum-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:00+00:00",
+      "sig": null,
+      "hash": "23fda8fbebea7a87f6debfd4898d4866ff1dd37acbd1b99da2d83678a176dfef"
+    },
+    {
+      "v": 1,
+      "event_id": "mum:2",
+      "origin": "mum",
+      "seq": 2,
+      "report_id": "R-b0b00002",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"FCOFF-500\",\"name\":\"Filter coffee 500 g\",\"qty\":1,\"price\":449,\"user\":\"Bob\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1791813010000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "bob-2",
+      "actor": "agent-mum-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:10+00:00",
+      "sig": null,
+      "observed": [
+        "mum:1"
+      ],
+      "hash": "793533224a4effb13fff1887610470618db8b3f3cd3fa08382e14e89a807201f"
+    },
+    {
+      "v": 1,
+      "event_id": "pun:1",
+      "origin": "pun",
+      "seq": 1,
+      "report_id": "R-b0b00002",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"FCOFF-500\",\"name\":\"Filter coffee 500 g\",\"qty\":1,\"price\":449,\"user\":\"Bob\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1791813010600,
+        0
+      ],
+      "priority": 2,
+      "op_id": "bob-2",
+      "actor": "agent-pun-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:10+00:00",
+      "sig": null,
+      "observed": [
+        "mum:1"
+      ],
+      "hash": "c53c5a36580517a0c8110d5d5af7df02c1649353898f029d64fe1403c5705ff3"
+    }
+  ],
+  "report": {
+    "report_id": "R-b0b00002",
+    "state": {
+      "title": "Bob",
+      "description": "",
+      "category": "cart",
+      "location": null,
+      "severity": 1,
+      "status": "open",
+      "assigned_team": null,
+      "people_estimate": null,
+      "notes": [
+        {
+          "id": "mum:2",
+          "text": "{\"kind\":\"ADD\",\"sku\":\"FCOFF-500\",\"name\":\"Filter coffee 500 g\",\"qty\":1,\"price\":449,\"user\":\"Bob\"}"
+        }
+      ]
+    },
+    "live": {
+      "title": [
+        "mum:1"
+      ],
+      "description": [
+        "mum:1"
+      ],
+      "category": [
+        "mum:1"
+      ],
+      "location": [
+        "mum:1"
+      ],
+      "severity": [
+        "mum:1"
+      ],
+      "status": [
+        "mum:1"
+      ],
+      "assigned_team": [
+        "mum:1"
+      ],
+      "people_estimate": [
+        "mum:1"
+      ]
+    },
+    "conflicts": [],
+    "incomplete": false,
+    "policy_version": 1
+  }
+}
