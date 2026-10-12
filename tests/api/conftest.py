@@ -7,7 +7,6 @@ import os
 
 os.environ.setdefault("ENV_FILE", "none")  # never read a developer's .env
 
-import base64  # noqa: E402
 import dataclasses  # noqa: E402
 
 import pytest  # noqa: E402
@@ -16,7 +15,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from region import config, store  # noqa: E402
 from region.engine import canonical  # noqa: E402
 from region.main import app  # noqa: E402
-from region.trust import keys  # noqa: E402
+from region.engine import signing  # noqa: E402
 
 KEY = {"X-API-Key": "dev-officer"}
 SUP = {"X-API-Key": "dev-supervisor"}
@@ -33,19 +32,25 @@ def make_settings(tmp_path, **overrides):
     return dataclasses.replace(config.settings, **base)
 
 
+@pytest.fixture(autouse=True)
+def no_dev_keys(tmp_path, monkeypatch):
+    """Tests never see the developer's real keys/ or key registry (run scripts create them).
+    A test that needs keys overrides these two variables (see tests/api/test_carry_and_idempotency.py)."""
+    monkeypatch.setenv("SIGNING_KEYS_DIR", str(tmp_path / "no-keys"))
+    monkeypatch.setenv("PUBLIC_KEYS_FILE", str(tmp_path / "no-registry.json"))
+
+
 @pytest.fixture
 def region(tmp_path, monkeypatch):
     """A freshly initialised region with its own signing key in a temp folder. Yields the DB path."""
-    monkeypatch.setenv("KEYS_DIR", str(tmp_path / "keys"))
-    monkeypatch.delenv("PUBLIC_KEYS_PATH", raising=False)
-    keys.reset_cache()
+    monkeypatch.setenv("SIGNING_KEYS_DIR", str(tmp_path / "keys"))
+    monkeypatch.setenv("PUBLIC_KEYS_FILE", str(tmp_path / "pub.json"))  # same names as the `keys` fixture of test_carry_and_idempotency
     settings = make_settings(tmp_path)
     monkeypatch.setattr(config, "settings", settings)
     store.init()
-    keys.ensure_region_key("mum")
+    signing.ensure_keys(["mum"])  # this region signs what it writes; mk_event(signed=True) adds the other origins
     yield settings.db_path
     store.close()
-    keys.reset_cache()
 
 
 @pytest.fixture
@@ -88,7 +93,7 @@ def mk_event(region):
                   wall="2026-10-12T15:00:00+05:30", sig=None)
         ev["hash"] = canonical.event_hash(ev)
         if signed:
-            keys.ensure_region_key(origin)
-            ev["sig"] = base64.b64encode(keys.private_key(origin).sign(ev["hash"].encode("ascii"))).decode("ascii")
+            signing.ensure_keys([origin])
+            ev["sig"] = signing.sign(origin, ev["hash"])
         return ev
     return _mk

@@ -1,8 +1,8 @@
 """GET /v1/status and /v1/health (owner: Akshit mounts; Simrit's region/sync/state.py builds the snapshot).
 
 Status v1.1 (contract 5.4). The data-at-risk block is computed here from the peers' acknowledged heads when the
-sync snapshot does not provide one, so the meter works with any snapshot version; `queues` and `carry` stay
-null until the sync lane supplies them. A snapshot value always wins over the fallback.
+sync snapshot does not provide one, so the meter works with any snapshot version; `queues` stays null until the
+sync lane supplies it and `carry` falls back to the node's own carry counters. A snapshot value always wins.
 """
 import time
 
@@ -12,7 +12,7 @@ from contracts.schemas import CONTRACT_VERSION
 from region import config, store
 from region.engine import digest
 from region.engine.derive import POLICY_VERSION
-from region.sync import state
+from region.sync import carry as carry_mod, state
 
 router = APIRouter(prefix="/v1", tags=["status"])
 
@@ -69,5 +69,5 @@ def status():
             "incomplete_reports": sum(1 for v in views.values() if v["incomplete"]),
             "risk": snap.get("risk") or data_at_risk(conn, peers),
             "queues": snap.get("queues"),
-            "carry": snap.get("carry"),
+            "carry": snap.get("carry") or carry_mod.carry_stats(),
         }

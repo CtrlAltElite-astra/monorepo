@@ -6,6 +6,7 @@ import DetailDrawer from './DetailDrawer.jsx'
 import LinkMatrix from './components/LinkMatrix.jsx'
 import ReviewQueue from './components/ReviewQueue.jsx'
 import MetricsPanel from './components/MetricsPanel.jsx'
+import ShopConsole from './ShopConsole.jsx'
 
 // CONVERGED only when every region is reachable and all report the same digests and policy version.
 // Any unreachable region gives UNKNOWN, never green.
@@ -21,6 +22,7 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [sel, setSel] = useState(null) // {regionId, reportId}
   const [updated, setUpdated] = useState(null)
+  const [tab, setTab] = useState('shop') // 'shop' = failover console, 'operator' = per-region operator view
 
   const refresh = async () => {
     setSnaps(await Promise.all(REGIONS.map(pollRegion)))
@@ -57,8 +59,12 @@ export default function App() {
       <header>
         <h1>SyncShield</h1>
         <span className={`badge conv-${conv}`}>{conv}</span>
+        <nav className="tabs">
+          <button className={tab === 'shop' ? 'active' : ''} onClick={() => setTab('shop')}>Shop and failover</button>
+          <button className={tab === 'operator' ? 'active' : ''} onClick={() => setTab('operator')}>Operator</button>
+        </nav>
         <div className="spacer" />
-        {pairs.map(([a, b]) => (
+        {tab === 'operator' && pairs.map(([a, b]) => (
           <button key={a.id + b.id} disabled={busy} className={isDown(a, b) ? 'heal' : 'cut'} onClick={() => toggle(a, b)}>
             {isDown(a, b) ? `Heal ${a.id}↔${b.id}` : `Cut ${a.id}↔${b.id}`}
           </button>
@@ -71,20 +77,21 @@ export default function App() {
       <div className="muted status-line">
         {levels.join(' · ')}{updated && ` · updated ${updated.toLocaleTimeString()}`}
       </div>
-      <CreateReportForm regions={REGIONS} onDone={refresh} />
-      <main style={{ gridTemplateColumns: `repeat(${REGIONS.length}, minmax(0, 1fr))` }}>
+      {tab === 'shop' && <ShopConsole snaps={snaps} onRefresh={refresh} />}
+      {tab === 'operator' && <CreateReportForm regions={REGIONS} onDone={refresh} />}
+      {tab === 'operator' && <main style={{ gridTemplateColumns: `repeat(${REGIONS.length}, minmax(0, 1fr))` }}>
         {REGIONS.map((r) => (
           <RegionColumn key={r.id} region={r} snap={bySnap(r.id)} onChange={refresh}
             onSelect={(regionId, reportId) => setSel({ regionId, reportId })}
             selectedId={sel?.regionId === r.id ? sel.reportId : null} />
         ))}
-      </main>
-      {selReport && (
+      </main>}
+      {tab === 'operator' && selReport && (
         <DetailDrawer region={selRegion} report={selReport} onClose={() => setSel(null)} onChange={refresh} />
       )}
-      <ReviewQueue snaps={snaps} regions={REGIONS} onChange={refresh} />
-      <LinkMatrix regions={REGIONS} snaps={snaps} busy={busy} onToggle={toggleFromMatrix} />
-      <MetricsPanel snaps={snaps} />
+      {tab === 'operator' && <ReviewQueue snaps={snaps} regions={REGIONS} onChange={refresh} />}
+      {tab === 'operator' && <LinkMatrix regions={REGIONS} snaps={snaps} busy={busy} onToggle={toggleFromMatrix} />}
+      {tab === 'operator' && <MetricsPanel snaps={snaps} />}
     </div>
   )
 }

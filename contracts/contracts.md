@@ -34,8 +34,9 @@ Stored in `events.body` and sent between regions unchanged.
 Canonical JSON: `json.dumps(obj, sort_keys=True, separators=(',',':'), ensure_ascii=False)` as UTF-8, no floats
 in hashed fields. Tie-break order: `(hlc[0], hlc[1], origin, seq)`.
 
-`schemas.EVENT_KEYS` lists the original keys; `schemas.EVENT_OPTIONAL_KEYS` lists the v1.1 additions
-(`op_id`, `observed`, `role`, `auth_mode`). Every NEW event carries all of them.
+`schemas.EVENT_KEYS` lists the envelope keys, including `op_id` and `observed` (always present, nullable);
+`schemas.EVENT_OPTIONAL_KEYS` lists the additive `role` and `auth_mode`. Every NEW event carries all of them;
+older events and fixtures may lack the optional two.
 
 ## 2. Report fields
 
@@ -106,8 +107,10 @@ role is not re-checked.
 
 Reserved, not built yet (do not reuse): `GET /v1/metrics`, `POST /admin/config`, `POST /admin/burst`.
 
-`/v1/carry` carry results use `reason` in `bad_hash | bad_sig | unknown_origin | shape`. It must stay disabled until
-signature verification is on. Any valid API key may call it: the event signatures, not the carrier, are the protection.
+`/v1/carry` results use `reason` in `bad_hash | bad_sig | unknown_origin | shape | own_origin`. `own_origin`: an event of
+THIS node that it does not hold is never imported (it would reuse a sequence number; it was committed before it was
+acknowledged). It must stay disabled until signature verification is on. Any valid API key may call it: the event
+signatures, not the carrier, are the protection. Accepted events go through the same idempotent `ingest()` as replication.
 
 ### 3.3 Writes: `op_id`, report ids, signed events, replays
 
@@ -208,7 +211,8 @@ same order for the same event set. `cursor` is an integer offset; `limit` is cla
  "carry": {"received": 0, "new": 0, "dup": 0, "rejected": 0}}
 ```
 
-`queues` and `carry` are `null` until the sync lane supplies them; consumers must handle `null`. `acked` repeats
+`queues` is `null` until the sync lane supplies it; `carry` is the node's carry counters (since it started). Consumers must
+handle `null`. `acked` repeats
 `their_heads` under the v1.1 name. The global badge is computed by the client from every region's status:
 CONVERGED only when every configured region is reachable and all report the same `event_digest`, `state_hash` and
 `policy_version`; UNKNOWN if any is unreachable; INCOMPATIBLE if policy versions differ; DIVERGED if heads are equal
@@ -230,3 +234,21 @@ but hashes differ (a bug alarm).
 
 Regions allow `CORS_ORIGINS` (default `http://localhost:5173`, `http://127.0.0.1:5173`, `:4173`) with the headers
 `X-Api-Key`, `Content-Type`, `Idempotency-Key`, `X-Admin-Key`, and expose `Idempotent-Replay` and `Retry-After`.
+
+## 7. Policy v1 (the defined conflict-resolution policy; implemented in the engine by Lane B / Lane C)
+
+| field | concurrent rule | review |
+|---|---|---|
+| title, description, category | latest by (hlc, origin, seq) | no |
+| severity | highest | receipt only |
+| status | most active: open < assigned < resolved < closed = cancelled; lowest wins, latest breaks ties | yes |
+| assigned_team | earliest by tie-break order; `DOUBLE_DISPATCH` when two different teams | yes |
+| location | latest; review if candidates are 200 m or more apart | if far |
+| people_estimate | highest, never summed | yes |
+| notes | union by event id | n/a |
+| CLOSE_VS_NEW_INFO | a live close and a NOTE / severity >= 4 write that did not observe each other; status stays as derived | yes |
+
+Events sharing an `op_id` are ONE write: superseding one member supersedes all, one member stays live, one note is shown.
+Events without `observed` (older nodes) never raise CLOSE_VS_NEW_INFO. Keys: `keys/<region>.key` (private, git-ignored) and
+`region/trust/public_keys.json` (registry, generated locally for development, git-ignored; `scripts/gen_keys.py`).
+Peers authenticate with `X-Peer-Token`, so an unsigned peer event is still accepted today and any signature present is verified.

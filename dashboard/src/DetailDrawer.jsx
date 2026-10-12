@@ -61,7 +61,7 @@ export default function DetailDrawer({ region, report, onClose, onChange }) {
       </table>
 
       {report.conflicts.length > 0 && <h3>Conflicts</h3>}
-      {report.conflicts.map((c) => <ReceiptPanel key={c.field} conflict={c} />)}
+      {report.conflicts.map((c) => <ReceiptPanel key={c.field + c.rule} conflict={c} />)}
 
       <h3>Notes</h3>
       <ul className="notes">

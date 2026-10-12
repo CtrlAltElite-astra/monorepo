@@ -1,7 +1,7 @@
 {
   "region": "mum",
   "schema_version": 1,
-  "policy_version": 0,
+  "policy_version": 1,
   "heads": {
     "mum": 2,
     "pun": 0

@@ -1,69 +1,43 @@
-"""Signing keys, integrity at ingest (T10), CORS, body bound and the schema migration (owner: Akshit)."""
-import base64
+"""Signatures at the API, integrity at ingest (T10), CORS, body bound and the schema migration (owner: Akshit)."""
 import json
 import sqlite3
 
 import pytest
 
 from region import config, store
-from region.engine import canonical
+from region.engine import canonical, signing
 from region.main import cors_origins
 from region.sync import ingest
-from region.trust import keys, signing
 
 from conftest import KEY, create_value
 
 ORIGIN_OK = {"Origin": "http://localhost:5173"}
 
 
-# ---- keys and signatures ---------------------------------------------------------------------
-def test_ensure_region_key_is_idempotent_and_publishes_only_the_public_half(region, tmp_path):
-    first = keys.ensure_region_key("mum")
-    assert keys.ensure_region_key("mum") == first
-    assert (tmp_path / "keys" / "mum.pub").read_text() == first
-    assert first not in (tmp_path / "keys" / "mum.key").read_text()  # the seed is not the public key
-    assert keys.registry()["mum"] == first
+# ---- signatures (the signing implementation is region/engine/signing.py) ------------------------------
+def test_ensure_keys_is_idempotent_and_the_registry_holds_only_public_keys(region, tmp_path):
+    first = signing.public_keys()["mum"]
+    signing.ensure_keys(["mum"])
+    assert signing.public_keys()["mum"] == first
+    private = (tmp_path / "keys" / "mum.key").read_text().strip()
+    assert private != first and private not in (tmp_path / "pub.json").read_text()  # the seed never leaves keys/
 
 
-def test_only_this_regions_key_signs_and_everyone_with_the_registry_can_verify(region):
-    keys.ensure_region_key("pun")
-    sig = signing.sign("ab" * 32)
+def test_a_node_signs_with_its_own_key_and_everyone_with_the_registry_can_verify(region):
+    signing.ensure_keys(["pun"])
+    sig = signing.sign("mum", "ab" * 32)
     assert signing.verify("mum", "ab" * 32, sig)
     assert not signing.verify("pun", "ab" * 32, sig)       # a node never signs another node's events
     assert not signing.verify("mum", "cd" * 32, sig)       # a different hash
-    assert signing.is_known_origin("pun") and not signing.is_known_origin("nobody")
+    assert signing.has_key("pun") and not signing.has_key("nobody")
+    assert signing.sign("nobody", "ab" * 32) is None       # no key provisioned: unsigned, never a made-up signature
 
 
-@pytest.mark.parametrize("origin,hash_hex,sig", [
-    ("mum", "ab" * 32, "not base64 !!"), ("mum", "ab" * 32, ""), ("mum", "ab" * 32, "AAAA"),
-    ("ghost", "ab" * 32, "AAAA"), (None, "ab" * 32, "AAAA"), ("mum", None, "AAAA"), ("mum", "ab" * 32, None),
-    ("mum", "ab" * 32, 42),
+@pytest.mark.parametrize("origin,sig", [
+    ("mum", "not base64 !!"), ("mum", ""), ("mum", "AAAA"), ("ghost", "AAAA"), (None, "AAAA"), ("mum", None), ("mum", 42),
 ])
-def test_verify_is_false_and_never_raises_on_garbage(region, origin, hash_hex, sig):
-    assert signing.verify(origin, hash_hex, sig) is False
-
-
-def test_the_registry_merges_committed_generated_and_local_keys_later_wins(region, tmp_path, monkeypatch):
-    keys_dir = tmp_path / "keys"
-    (keys_dir / "public_keys.json").write_text(json.dumps({"del": "AAAA", "mum": "STALE"}))
-    assert keys.registry()["del"] == "AAAA"
-    assert keys.registry()["mum"] == (keys_dir / "mum.pub").read_text()  # a region's own .pub wins over the file
-    other = tmp_path / "only.json"
-    other.write_text(json.dumps({"pun": "BBBB"}))
-    monkeypatch.setenv("PUBLIC_KEYS_PATH", str(other))
-    assert keys.registry()["pun"] == "BBBB" and "del" not in keys.registry()
-
-
-def test_a_region_id_cannot_silently_take_a_new_key(region, tmp_path):
-    """A wiped key under a known id must not be able to sign: peers would reject, or worse accept, its history."""
-    registered = keys.public_key("mum")
-    assert registered is not None
-    (tmp_path / "keys" / "mum.key").unlink()
-    (tmp_path / "keys" / "mum.pub").unlink()
-    (tmp_path / "keys" / "public_keys.json").write_text(json.dumps({"mum": base64.b64encode(b"x" * 32).decode()}))
-    keys.reset_cache()
-    with pytest.raises(RuntimeError, match="already registered"):
-        keys.ensure_region_key("mum")
+def test_verify_fails_closed_and_never_raises_on_garbage(region, origin, sig):
+    assert signing.verify(origin, "ab" * 32, sig) is False
 
 
 # ---- T10: integrity at ingest -------------------------------------------------------------------------
@@ -103,15 +77,15 @@ def test_an_edited_body_with_a_recomputed_hash_fails_the_signature(client, mk_ev
 
 
 def test_an_event_signed_with_the_wrong_key_is_quarantined(client, mk_event):
-    keys.ensure_region_key("del")
+    signing.ensure_keys(["del"])
     ev = signed_event(mk_event)
-    ev["sig"] = base64.b64encode(keys.private_key("del").sign(ev["hash"].encode("ascii"))).decode()  # del signs pun's event
+    ev["sig"] = signing.sign("del", ev["hash"])  # del signs pun's event
     assert rejected(ingest.ingest([ev], source="pun")) == {"pun:1": "bad_sig"}
 
 
 def test_a_signed_event_from_an_unknown_origin_is_quarantined(client, mk_event):
     ev = mk_event("ghost", 1, "CREATE", "R-bbbbbbbb", value=create_value())
-    ev["sig"] = base64.b64encode(b"\0" * 64).decode()
+    ev["sig"] = "AAAA"
     assert rejected(ingest.ingest([ev], source="pun")) == {"ghost:1": "bad_sig"}
 
 
@@ -123,8 +97,19 @@ def test_a_duplicate_of_a_good_event_is_ignored_and_a_reused_id_is_quarantined(c
     assert rejected(ingest.ingest([other], source="pun")) == {"pun:1": "id_reused"}
 
 
-@pytest.mark.xfail(strict=True, reason="Lane D's ingest verifies only events that carry a sig; unsigned foreign events "
-                                       "are accepted (docs/lane-a-handoff.md). Remove this xfail when ingest fails closed.")
+def test_an_event_that_arrives_by_carry_is_marked_carried_in_history(client, mk_event):
+    ev = signed_event(mk_event)
+    r = client.post("/v1/carry", json={"events": [ev]}, headers=KEY)
+    assert r.json()["results"] == [{"event_id": "pun:1", "result": "new"}]
+    (row,) = client.get("/v1/reports/R-aaaaaaaa/history").json()
+    assert row["carried"] is True and row["sig_status"] == "verified"
+    again = client.post("/v1/carry", json={"events": [ev]}, headers=KEY)
+    assert again.json()["results"] == [{"event_id": "pun:1", "result": "dup"}]
+
+
+@pytest.mark.xfail(strict=True, reason="Plan 6.2: a received event is checked for signature too. Today peers authenticate "
+                                       "with X-Peer-Token, so ingest accepts an UNSIGNED foreign event (contracts.md 7). "
+                                       "Remove this xfail when ingest fails closed.")
 def test_an_unsigned_foreign_event_is_rejected(client, mk_event):
     ev = mk_event("pun", 1, "CREATE", "R-aaaaaaaa", value=create_value("Dev"))  # no signature at all
     assert ingest.ingest([ev], source="pun")["rejected"] == 1
@@ -177,20 +162,28 @@ CREATE TABLE reports (report_id TEXT PRIMARY KEY, view TEXT NOT NULL, n_conflict
 """
 
 
-def test_a_database_from_before_v11_is_upgraded_in_place_and_keeps_its_data(tmp_path, monkeypatch):
+def legacy_db(tmp_path, monkeypatch, already_has_op_id=False):
     db = tmp_path / "old.db"
     con = sqlite3.connect(db)
     con.executescript(LEGACY)
+    if already_has_op_id:  # what Lane C's first cut of the migration did before this runner existed
+        con.execute("ALTER TABLE events ADD COLUMN op_id TEXT")
+        con.execute("CREATE INDEX ix_events_op ON events (op_id)")
     con.execute("INSERT INTO node_meta VALUES ('region','mum'), ('next_seq','2')")
-    con.execute("INSERT INTO events VALUES ('mum:1','mum',1,'R-mum-1','CREATE',NULL,1,1,0,'h','{}',1.0)")
+    con.execute("INSERT INTO events (event_id,origin,seq,report_id,type,field,priority,hlc_l,hlc_c,hash,body,received_at) "
+                "VALUES ('mum:1','mum',1,'R-mum-1','CREATE',NULL,1,1,0,'h','{}',1.0)")
     con.commit()
     con.close()
     monkeypatch.setattr(config, "settings", __import__("dataclasses").replace(config.settings, db_path=str(db), region="mum"))
+
+
+@pytest.mark.parametrize("already_has_op_id", [False, True], ids=["from-v1", "already-upgraded-by-lane-c"])
+def test_a_database_from_before_v11_is_upgraded_in_place_and_keeps_its_data(tmp_path, monkeypatch, already_has_op_id):
+    legacy_db(tmp_path, monkeypatch, already_has_op_id)
     store.init()
     store.init()  # a second start must not try to add the column again
     with store.read() as c:
-        cols = {r[1] for r in c.execute("PRAGMA table_info(events)")}
-        assert "op_id" in cols
+        assert "op_id" in {r[1] for r in c.execute("PRAGMA table_info(events)")}
         assert c.execute("SELECT op_id FROM events WHERE event_id='mum:1'").fetchone()[0] is None  # the old row is intact
         assert {r[0] for r in c.execute("SELECT name FROM schema_migrations")} == {"002_op_id.sql"}
         assert c.execute("SELECT COUNT(*) FROM carried_events").fetchone()[0] == 0

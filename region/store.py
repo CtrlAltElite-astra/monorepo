@@ -20,11 +20,19 @@ MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 MIGRATION = MIGRATIONS_DIR / "001_init.sql"  # idempotent; also sets the per-connection PRAGMAs
 
 
+def _ensure_op_id_column(conn: sqlite3.Connection) -> None:
+    """Contract v1.1: events.op_id. SQLite has no ADD COLUMN IF NOT EXISTS, so it is guarded here; this also keeps a
+    database that an earlier build already upgraded working (the column exists, the migration row does not)."""
+    if "op_id" not in {r[1] for r in conn.execute("PRAGMA table_info(events)")}:
+        conn.execute("ALTER TABLE events ADD COLUMN op_id TEXT")
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     """001 is idempotent and runs every start (it carries the PRAGMAs). Every later file runs
     exactly once, inside one transaction together with its schema_migrations row, so a crash
     can never leave a half-applied ALTER TABLE behind."""
     conn.executescript(MIGRATION.read_text(encoding="utf-8"))
+    _ensure_op_id_column(conn)
     conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at REAL NOT NULL)")
     done = {r[0] for r in conn.execute("SELECT name FROM schema_migrations")}
     for path in sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql")):
@@ -50,6 +58,28 @@ def init(db_path: str | None = None) -> None:
     stored = _conn.execute("SELECT v FROM node_meta WHERE k='region'").fetchone()[0]
     if stored != config.settings.region:
         raise RuntimeError(f"{path} belongs to region '{stored}', not '{config.settings.region}'")
+    rebuild_stale_views()
+
+
+def rebuild_stale_views() -> int:
+    """Re-derive every stored view whose policy_version differs from the engine's.
+
+    Views are a projection of the event log, so this is always safe. Without it a node that was
+    upgraded would keep old-policy views for reports nobody touched, and nodes would disagree on
+    state_hash until each report happened to be edited again.
+    """
+    n = 0
+    with tx() as conn:
+        rows = conn.execute("SELECT report_id, view FROM reports").fetchall()
+        for rid, raw in rows:
+            try:
+                ver = json.loads(raw).get("policy_version")
+            except ValueError:
+                ver = None
+            if ver != derive_mod.POLICY_VERSION:
+                save_view(conn, rid, derive_mod.derive(events_for(conn, rid)))
+                n += 1
+    return n
 
 
 def close() -> None:
@@ -143,6 +173,21 @@ def insert_event_if_absent(conn, ev: dict) -> str:
         return "dup" if row[0] == ev["hash"] else "mismatch"
     conn.execute(_INSERT, _row_params(ev))
     return "new"
+
+
+def event_by_id(conn, event_id: str):
+    row = conn.execute("SELECT body FROM events WHERE event_id=?", (event_id,)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def missing_ids(conn, ids: list) -> list:
+    """Which of these event ids this node does NOT hold (order preserved)."""
+    have = set()
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        q = ",".join("?" for _ in chunk)
+        have.update(r[0] for r in conn.execute(f"SELECT event_id FROM events WHERE event_id IN ({q})", chunk))
+    return [i for i in ids if i not in have]
 
 
 def events_for(conn, report_id: str) -> list:

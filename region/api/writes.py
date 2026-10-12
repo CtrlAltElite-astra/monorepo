@@ -1,22 +1,22 @@
-"""The local write path v2 (owner: Akshit; engine calls by Rahil).
+"""The local write path v2 (owner: Akshit; engine calls by Rahil; v1.1 first cut by Miti, merged here).
 
 Always local, always durable before the caller sees a 2xx. Never calls a peer.
-Every event is hashed and signed by THIS region inside the write transaction (PDF 6.1):
+Every event is hashed and signed by THIS region inside the write transaction (plan 6.1):
 
   op_id        client UUID. A retry carrying the same op_id never creates a second event: the node
                replays the original event (also when that event arrived by replication or carry).
                Same op_id with a different body is refused (OpIdReuse).
   report_id    a client-chosen "R-" + 8 hex for carts; otherwise the server makes R-<region>-<seq>.
-  observed     the evidence a close / new-info write had seen (CLOSE_VS_NEW_INFO, PDF 6.7).
+  observed     the evidence a close / new-info write had seen (CLOSE_VS_NEW_INFO, plan 6.7).
+  sig          Ed25519 by this region's key (region/engine/signing.py); None when no key is provisioned.
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
 from region import config, store
-from region.engine import canonical, hlc
-from region.engine.derive import derive
-from region.trust import signing
+from region.engine import canonical, hlc, signing
+from region.engine.derive import CLOSED, derive
 
 
 class NotFound(Exception):
@@ -59,21 +59,25 @@ def _wall() -> str:
 
 
 def _priority(ev: dict) -> int:
-    """0 critical / 1 normal / 2 bulk (PDF 4.2). One classifier for the whole system: Lane D's push queue
+    """0 critical / 1 normal / 2 bulk (plan 4.2). One classifier for the whole system: Lane D's push queue
     already uses this one. Lane B's engine.priority.classify can replace this single call when it lands."""
     from region.sync.push import classify_priority
     return classify_priority(ev)
 
 
 def _observed(conn, report_id: str, type_: str, field: Optional[str], value) -> Optional[list]:
-    """Evidence for CLOSE_VS_NEW_INFO. A status write to closed/cancelled lists the NOTE and severity events
-    this node had; a NOTE or severity write lists the live status events this node had; others carry none."""
-    status_write = type_ in ("SET", "RESOLVE") and field == "status"
-    if status_write and value in ("closed", "cancelled"):
-        notes = [e["event_id"] for e in store.events_for(conn, report_id) if e["type"] == "NOTE"]
-        return sorted(set(notes) | set(store.live_ids(conn, report_id, "severity")))
+    """Evidence for CLOSE_VS_NEW_INFO: the event ids this node had seen when it wrote.
+
+    A status write (SET or RESOLVE) to closed/cancelled lists every NOTE and every severity write it holds
+    (all of them, live or superseded, so a later-lowered severity can never raise a false alarm);
+    a NOTE or a severity write lists the live status events it holds; every other write carries none."""
+    if type_ in ("SET", "RESOLVE") and field == "status" and value in CLOSED:
+        ids = [e["event_id"] for e in store.events_for(conn, report_id)
+               if e["type"] == "NOTE" or (e.get("field") == "severity" and e["type"] in ("SET", "RESOLVE"))
+               or (e["type"] == "CREATE" and isinstance(e["value"], dict) and "severity" in e["value"])]
+        return sorted(set(ids))
     if type_ == "NOTE" or (type_ in ("SET", "RESOLVE") and field == "severity"):
-        return sorted(store.live_ids(conn, report_id, "status"))
+        return sorted(set(store.live_ids(conn, report_id, "status")))
     return None
 
 
@@ -94,12 +98,12 @@ def _append(conn, *, report_id, type_, field, value, actor, role, auth_mode, op_
     ev = dict(
         v=1, event_id=f"{region}:{seq}", origin=region, seq=seq, report_id=report_id,
         type=type_, field=field, value=value, supersedes=supersedes, hlc=[h[0], h[1]],
-        priority=1, op_id=op_id, observed=_observed(conn, report_id, type_, field, value),
+        priority=1, op_id=op_id, observed=_observed(conn, report_id, type_, field, value) if type_ != "CREATE" else None,
         actor=actor, role=role, auth_mode=auth_mode, reason=reason, wall=_wall(), sig=None,
     )
     ev["priority"] = _priority(ev)
     ev["hash"] = canonical.event_hash(ev)
-    ev["sig"] = signing.sign(ev["hash"])
+    ev["sig"] = signing.sign(region, ev["hash"])  # None when no key is provisioned: carry then refuses the event
     store.insert_event(conn, ev)
     store.save_view(conn, report_id, derive(store.events_for(conn, report_id)))
     return ev
@@ -143,9 +147,16 @@ def local_write(report_id, type_, field, value, actor, expected=None, *, op_id=N
     return WriteResult(ev)
 
 
+def local_write_ex(report_id, type_, field, value, actor, expected=None, op_id=None, new_report_id=None):
+    """Compatibility shape used by Lane C's first cut: returns (event, replayed)."""
+    result = local_write(new_report_id if type_ == "CREATE" else report_id, type_, field, value, actor,
+                         expected, op_id=op_id)
+    return result.event, result.replay
+
+
 def resolve(report_id, field, value, candidates, reason, actor, *, role="supervisor", auth_mode="online",
             op_id=None) -> WriteResult:
-    """A supervisor settles a conflicted field (PDF 6.7). The RESOLVE event supersedes exactly the live
+    """A supervisor settles a conflicted field (plan 6.7). The RESOLVE event supersedes exactly the live
     candidates and replicates like any event; it never hides an edit it did not see."""
     with store.tx() as conn:
         if op_id:

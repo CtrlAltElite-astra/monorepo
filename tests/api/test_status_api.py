@@ -56,10 +56,10 @@ def test_digests_are_the_engine_digests_and_stable(create, client):
     assert changed["event_digest"] != first["event_digest"] and changed["state_hash"] != first["state_hash"]
 
 
-def test_queues_and_carry_stay_null_until_the_sync_lane_supplies_them(client):
+def test_queues_stay_null_until_the_sync_lane_supplies_them_and_carry_counts_are_present(client):
     s = status(client)
     assert "queues" in s and s["queues"] is None
-    assert "carry" in s and s["carry"] is None
+    assert set(s["carry"]) == {"received", "new", "dup", "rejected"}  # this node's carry counters since it started
 
 
 def test_peers_carry_the_v11_keys(client):

@@ -144,7 +144,8 @@ def test_close_lists_the_notes_and_severity_it_saw_and_new_info_lists_the_status
     assert ev["mum:1"]["observed"] is None                       # CREATE
     assert ev["mum:2"]["observed"] == ["mum:1"]                  # a NOTE lists the live status
     assert ev["mum:4"]["observed"] == ["mum:1"]                  # a severity write lists the live status
-    assert ev["mum:5"]["observed"] == ["mum:2", "mum:3", "mum:4"]  # the close lists notes + live severity
+    # the close lists every NOTE and every severity write it holds (the CREATE carries a severity too)
+    assert ev["mum:5"]["observed"] == ["mum:1", "mum:2", "mum:3", "mum:4"]
     assert ev["mum:6"]["observed"] == ["mum:5"]                  # the late note saw the close
 
 

@@ -9,7 +9,8 @@ from region.engine.derive import derive
 def mk(origin, seq, type_, field=None, value=None, sup=(), hlc=(0, 0), report="R-mum-1", actor=None, wall="2026-10-12T14:52:10+05:30"):
     ev = dict(v=1, event_id=f"{origin}:{seq}", origin=origin, seq=seq, report_id=report, type=type_, field=field,
               value=value, supersedes=list(sup), hlc=list(hlc), priority=1,
-              actor=actor or f"officer-{origin}-1", reason=None, wall=wall, sig=None)
+              actor=actor or f"officer-{origin}-1", reason=None, wall=wall, sig=None,
+              op_id=None, observed=None)  # v1.1 envelope keys (null for server-made / not applicable)
     ev["hash"] = canonical.event_hash(ev)
     return ev
 
@@ -29,7 +30,7 @@ report = {"report_id": "R-mum-1", "state": v["state"], "live": v["live"], "confl
           "incomplete": v["incomplete"],
           "consistency": {"replication": "LOCAL_ONLY", "confirmed_by": [], "awaiting": ["pun"], "stale_possible": True}}
 (out / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-status = {"region": "mum", "schema_version": 1, "policy_version": 0, "heads": {"mum": 2, "pun": 0},
+status = {"region": "mum", "schema_version": 1, "policy_version": 1, "heads": {"mum": 2, "pun": 0},
           "event_count": 2, "event_digest": "sha256-hex", "state_hash": "sha256-hex",
           "peers": {"pun": {"link": "down", "reachable": False, "last_ok_s": 47.2, "last_ok_ms": 47200,
                             "their_heads": {"pun": 2}, "acked": {"pun": 2}, "last_error": "link_down", "fails": 5}},

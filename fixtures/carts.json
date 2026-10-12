@@ -1,0 +1,502 @@
+{
+  "description": "Five shoppers, one cart each, partly filled (Appendix B).",
+  "products": {
+    "SANDAL-01": {
+      "name": "Kolhapuri sandals",
+      "price": 1299
+    },
+    "LAMP-01": {
+      "name": "Desk lamp",
+      "price": 1099
+    },
+    "BOTTLE-01": {
+      "name": "Steel water bottle",
+      "price": 499
+    },
+    "BAG-01": {
+      "name": "Backpack",
+      "price": 1599
+    },
+    "KURTA-01": {
+      "name": "Cotton kurta",
+      "price": 899
+    },
+    "GIFT-500": {
+      "name": "Gift card",
+      "price": 500
+    },
+    "FCOFF-500": {
+      "name": "Filter coffee 500 g",
+      "price": 449
+    },
+    "CHAI-01": {
+      "name": "Masala chai box",
+      "price": 349
+    },
+    "EARBUD-01": {
+      "name": "Wireless earbuds",
+      "price": 1999
+    },
+    "MAT-01": {
+      "name": "Yoga mat",
+      "price": 799
+    }
+  },
+  "carts": [
+    {
+      "report_id": "R-a11ce001",
+      "owner": "Alice",
+      "home_node": "mum",
+      "skus": [
+        "FCOFF-500",
+        "BOTTLE-01"
+      ],
+      "status": "Shopping",
+      "delivery_speed": "Standard"
+    },
+    {
+      "report_id": "R-b0b00002",
+      "owner": "Bob",
+      "home_node": "mum",
+      "skus": [
+        "EARBUD-01"
+      ],
+      "status": "Shopping",
+      "delivery_speed": "Standard"
+    },
+    {
+      "report_id": "R-c4177003",
+      "owner": "Chitra",
+      "home_node": "pun",
+      "skus": [
+        "KURTA-01",
+        "CHAI-01"
+      ],
+      "status": "Shopping",
+      "delivery_speed": "Standard"
+    },
+    {
+      "report_id": "R-de400004",
+      "owner": "Dev",
+      "home_node": "pun",
+      "skus": [
+        "LAMP-01"
+      ],
+      "status": "Shopping",
+      "delivery_speed": "Standard"
+    },
+    {
+      "report_id": "R-e5ba0005",
+      "owner": "Esha",
+      "home_node": "del",
+      "skus": [
+        "MAT-01",
+        "GIFT-500",
+        "SANDAL-01"
+      ],
+      "status": "Shopping",
+      "delivery_speed": "Standard"
+    }
+  ],
+  "events": [
+    {
+      "v": 1,
+      "event_id": "mum:1",
+      "origin": "mum",
+      "seq": 1,
+      "report_id": "R-a11ce001",
+      "type": "CREATE",
+      "field": null,
+      "value": {
+        "title": "Alice",
+        "description": "",
+        "category": "cart",
+        "severity": 1,
+        "status": "open",
+        "assigned_team": null,
+        "location": null,
+        "people_estimate": null
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277000000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "op-create-alice",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "93797487de604f5a532be0fb6e30051e7b5a2eb7ab274abd410d5c3084beb794",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "mum:2",
+      "origin": "mum",
+      "seq": 2,
+      "report_id": "R-a11ce001",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"FCOFF-500\",\"name\":\"Filter coffee 500 g\",\"qty\":1,\"price\":449,\"user\":\"Alice\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277001000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-alice-1",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "951d3d77a7f9fe147590fef2c25cc61bfab7384f6e30dc054bda9c55752fa9f3",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "mum:3",
+      "origin": "mum",
+      "seq": 3,
+      "report_id": "R-a11ce001",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"BOTTLE-01\",\"name\":\"Steel water bottle\",\"qty\":1,\"price\":499,\"user\":\"Alice\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277002000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-alice-2",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "0c9e4f158effddf43375cd08b7825936fa0de974a85ee021e102f8c4da63fcae",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "mum:4",
+      "origin": "mum",
+      "seq": 4,
+      "report_id": "R-b0b00002",
+      "type": "CREATE",
+      "field": null,
+      "value": {
+        "title": "Bob",
+        "description": "",
+        "category": "cart",
+        "severity": 1,
+        "status": "open",
+        "assigned_team": null,
+        "location": null,
+        "people_estimate": null
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277003000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "op-create-bob",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "4a66eec48ea6ed2dbe92e5848842cd4bfe2e41e5b83f71166ecb03a2879fb7e5",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "mum:5",
+      "origin": "mum",
+      "seq": 5,
+      "report_id": "R-b0b00002",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"EARBUD-01\",\"name\":\"Wireless earbuds\",\"qty\":1,\"price\":1999,\"user\":\"Bob\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277004000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-bob-1",
+      "actor": "agent-mum-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "5fb857e6d461ac8b10e06a3e66ea2f960be22cf9cdf058b86f18edaff14d43fc",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "pun:1",
+      "origin": "pun",
+      "seq": 1,
+      "report_id": "R-c4177003",
+      "type": "CREATE",
+      "field": null,
+      "value": {
+        "title": "Chitra",
+        "description": "",
+        "category": "cart",
+        "severity": 1,
+        "status": "open",
+        "assigned_team": null,
+        "location": null,
+        "people_estimate": null
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277005000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "op-create-chitra",
+      "actor": "agent-pun-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "2f593356d75534c7ca0dc867858ca685551432316723dcd1dbc8b4430f989185",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "pun:2",
+      "origin": "pun",
+      "seq": 2,
+      "report_id": "R-c4177003",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"KURTA-01\",\"name\":\"Cotton kurta\",\"qty\":1,\"price\":899,\"user\":\"Chitra\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277006000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-chitra-1",
+      "actor": "agent-pun-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "2d080ccaff5af293b47de2221fde6ab4be4a35b1dfa5cebae365a98dd30b8e0a",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "pun:3",
+      "origin": "pun",
+      "seq": 3,
+      "report_id": "R-c4177003",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"CHAI-01\",\"name\":\"Masala chai box\",\"qty\":1,\"price\":349,\"user\":\"Chitra\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277007000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-chitra-2",
+      "actor": "agent-pun-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "47f3e95eb632e5ee748d7e897f7612532e36e8284862e0de7b2cf36bdd84b321",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "pun:4",
+      "origin": "pun",
+      "seq": 4,
+      "report_id": "R-de400004",
+      "type": "CREATE",
+      "field": null,
+      "value": {
+        "title": "Dev",
+        "description": "",
+        "category": "cart",
+        "severity": 1,
+        "status": "open",
+        "assigned_team": null,
+        "location": null,
+        "people_estimate": null
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277008000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "op-create-dev",
+      "actor": "agent-pun-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "467329b9b92d13890edfacc0d79f67518edf5327c56c43f396da8125dbe3791c",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "pun:5",
+      "origin": "pun",
+      "seq": 5,
+      "report_id": "R-de400004",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"LAMP-01\",\"name\":\"Desk lamp\",\"qty\":1,\"price\":1099,\"user\":\"Dev\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277009000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-dev-1",
+      "actor": "agent-pun-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "ff4603e2138e5df988b17f0e1734699035792fc760c73ffea399a30095820958",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "del:1",
+      "origin": "del",
+      "seq": 1,
+      "report_id": "R-e5ba0005",
+      "type": "CREATE",
+      "field": null,
+      "value": {
+        "title": "Esha",
+        "description": "",
+        "category": "cart",
+        "severity": 1,
+        "status": "open",
+        "assigned_team": null,
+        "location": null,
+        "people_estimate": null
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277010000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "op-create-esha",
+      "actor": "agent-del-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "a9fb9a5aef9f68ef6791e610ac210faefbe29366c0c47894ad6e3009f5dc1678",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "del:2",
+      "origin": "del",
+      "seq": 2,
+      "report_id": "R-e5ba0005",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"MAT-01\",\"name\":\"Yoga mat\",\"qty\":1,\"price\":799,\"user\":\"Esha\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277011000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-esha-1",
+      "actor": "agent-del-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "d0994c88d27ea229a7ec5f51d31e6b27336fefb2ab00407f9b30be8232a73d6c",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "del:3",
+      "origin": "del",
+      "seq": 3,
+      "report_id": "R-e5ba0005",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"GIFT-500\",\"name\":\"Gift card\",\"qty\":1,\"price\":500,\"user\":\"Esha\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277012000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-esha-2",
+      "actor": "agent-del-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "37e7bf6893dcbd3d0331472067774e3ae18dfac52a9beb183cc3dcc3f220df91",
+      "sig": null
+    },
+    {
+      "v": 1,
+      "event_id": "del:4",
+      "origin": "del",
+      "seq": 4,
+      "report_id": "R-e5ba0005",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"SANDAL-01\",\"name\":\"Kolhapuri sandals\",\"qty\":1,\"price\":1299,\"user\":\"Esha\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1760277013000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "op-esha-3",
+      "actor": "agent-del-1",
+      "role": "officer",
+      "auth_mode": "online",
+      "reason": null,
+      "wall": "2026-10-12T14:00:00+05:30",
+      "hash": "7b800f9bea0f8c5f803566fff5d360d7d7e98b3123ef5f919f9e5adf70fa71b4",
+      "sig": null
+    }
+  ]
+}

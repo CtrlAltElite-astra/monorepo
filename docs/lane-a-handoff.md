@@ -51,7 +51,8 @@ Legend: [x] done and tested · [~] partly · [ ] not started · [D]/[B]/[C] wait
 ### Backend
 - [x] Contract v1.1 (`contracts/contracts.md`, `schemas.py`, `CHANGELOG.md`, status fixture) and migration `002_op_id.sql`
 - [x] Migration runner in `store.py` (001 idempotent each start; later files once, in a transaction, recorded in `schema_migrations`)
-- [x] Signing seam: `region/trust/keys.py` (per-region Ed25519 key, registry), `region/trust/signing.py` (`sign`, `verify`)
+- [x] Signing: Miti's `region/engine/signing.py` is the single implementation (my earlier `trust/keys.py` was dropped in the merge);
+      each region provisions its own key at start, and the shared registry update is now locked + atomic (fixed a 3-regions-at-once race)
 - [x] Write path v2: `op_id` idempotency (also for events that arrived by replication/carry), client `report_id`,
       signed event in every 2xx body, `observed` plumbing, roles + `auth_mode`, push hand-off after commit
 - [x] `POST /v1/reports/{id}/resolve` (supervisor, 409 guards) and `GET /v1/review` with full receipts
@@ -74,9 +75,9 @@ Legend: [x] done and tested · [~] partly · [ ] not started · [D]/[B]/[C] wait
 - [ ] NOT yet exercised in a browser (logic is unit-tested): resolve dialog + 409/403, tamper button, Prove it, Burst, join Delhi live, dark-theme pass on every panel, phone layout review
 - [ ] Hand-off to Miti, `scripts/run_web.*`, `.env.example` keys, README link, CI step, remove `dashboard/` (do as a SEPARATE final commit)
 ### Waiting on other lanes
-- [B] `engine/signing.py` (my `trust/signing.py` is the seam; B may delegate or replace its body), `policy v1`, `op_id` group rule in `derive`, `CLOSE_VS_NEW_INFO`, `priority.classify`
-- [D] `GET /healthz`, `POST /v1/carry`, `POST /v1/events/has`, ingest that fails closed on unsigned events, levels CONSTRAINED/RECOVERING, queues/carry in the snapshot
-- [C] `scripts/chaos_agent.py` (:9000), fixtures
+- Now ON `main` (Lane C's merge): `engine/signing.py`, policy v1 + op_id rule + CLOSE_VS_NEW_INFO in `derive`, `sync/carry.py` (`/healthz`, `/v1/carry`, `/v1/events/has`), `scripts/chaos_agent.py`, fixtures.
+- [B] `priority.classify` (I reuse Lane D's `classify_priority` through one call in `writes._priority`)
+- [D] ingest that fails closed on unsigned events (strict xfail test flags it), levels CONSTRAINED/RECOVERING, queues in the snapshot
 
 ## 5. How to run and test
 
@@ -116,10 +117,12 @@ Dev keys: `dev-officer` is the only key `run_one.py` provisions (see section 7).
 
 ## 6. Design decisions worth knowing
 
-- Signature = Ed25519 over the ASCII bytes of the event's hex `hash`, base64. `sign` only uses THIS region's key.
-  Keys: `keys/<region>.key` (git-ignored) and `keys/<region>.pub`; committed registry `region/trust/public_keys.json`
-  (empty seed). Each region writes only its own `.pub`, so three regions starting at once cannot corrupt a registry.
-  `ensure_region_key` refuses to re-key a region id that is registered with a different public key.
+- Signature = Ed25519 over the ASCII bytes of the event's hex `hash`, base64 (`region/engine/signing.py`; `region/trust/signing.py`
+  re-exports it for the ingest hook). `sign(region, hash)` is None when no key is provisioned (events stay unsigned and carry refuses them).
+  Keys: `keys/<region>.key` (git-ignored); registry `region/trust/public_keys.json` (git-ignored, generated). `run_one.py`
+  provisions every region up front and each region also provisions itself at start. Known gap vs my earlier design: nothing stops
+  a region id from silently taking a NEW key if its private key file is deleted (the registry entry is overwritten).
+- The history `carried` flag is set by `sync/carry.py` calling `store.mark_carried` for each newly accepted carried event.
 - Replays are decided from the events themselves (`events.op_id` index), not a separate idempotency table: the same
   rule covers writes done here, replicated, or carried. The `idempotency` table from migration 001 is unused.
 - `receipts.receipt()` passes an engine receipt through if it has `candidates`, else builds the same shape from stored
@@ -135,12 +138,10 @@ Dev keys: `dev-officer` is the only key `run_one.py` provisions (see section 7).
 - **Simrit, ingest fails open:** `region/sync/ingest.py` verifies only events whose `sig` is not null and silently skips
   verification when `region.trust.signing` is missing, so stripping `sig` bypasses it. Foreign events must carry a valid
   `sig` once signing is on (quarantine `unsigned`). My xfail test flips when this is fixed.
-- **Simrit, carry/healthz/has:** contract is in `contracts/contracts.md` 3.2; on a carried event call
-  `store.mark_carried(conn, [event_id, ...])` so history shows `carried: true`, and fill `carry` in the status snapshot.
+- **Simrit, carry/healthz/has:** now on `main` (written in Lane C's merge). Contract in `contracts/contracts.md` 3.2.
 - **Simrit, keys:** `scripts/run_one.py` only provisions `dev-officer`. Add `dev-supervisor` and `dev-admin`
   (`key:actor:role`) so the supervisor/resolve and admin paths can be demoed live.
-- **Rahil:** `engine/signing.py` may delegate to or replace `region/trust/signing.py`; keep `verify(origin, hash, sig)`.
-  When policy v1 changes `derive`, run `python scripts/gen_fixtures.py` and commit the fixtures.
+- **Rahil:** `engine/signing.py` and policy v1 are on `main`. When `derive` changes again, run `python scripts/gen_fixtures.py` and commit the fixtures.
 - **Miti:** `dashboard/` is replaced by `web/` (plan section 7). Chaos agent contract: `POST :9000/crash/{region}`,
   `POST :9000/start/{region}`, `GET :9000/state`, header `X-Admin-Key`.
 

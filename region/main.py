@@ -13,8 +13,8 @@ from fastapi.responses import JSONResponse
 from contracts import schemas
 from region import config, store
 from region.api import routes_reports, routes_review, routes_status, writes
-from region.sync import client, routes_admin, routes_sync
-from region.trust import keys
+from region.engine import signing
+from region.sync import carry, client, routes_admin, routes_sync
 
 DEFAULT_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:4173", "http://127.0.0.1:4173")
 
@@ -28,7 +28,8 @@ def cors_origins() -> list:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     store.init()
-    keys.ensure_region_key(config.settings.region)  # this region signs every event it writes
+    if not (signing.can_sign(config.settings.region) and signing.has_key(config.settings.region)):
+        signing.ensure_keys([config.settings.region])  # this region signs every event it writes (run_one provisions all up front)
     writes.set_loop(asyncio.get_running_loop())     # lets the write path hand events to the push queue
     task = asyncio.create_task(client.run_forever())
     try:
@@ -61,3 +62,4 @@ app.include_router(routes_review.router)
 app.include_router(routes_status.router)
 app.include_router(routes_sync.router)
 app.include_router(routes_admin.router)
+app.include_router(carry.router)
