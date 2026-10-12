@@ -21,7 +21,8 @@ def region_env(region: str, regions: list) -> dict:
         DB_PATH=str(ROOT / "data" / f"{region}.db"),
         PEERS=",".join(f"{r}=http://127.0.0.1:{PORTS[r]}" for r in regions if r != region),
         PEER_TOKEN=os.environ.get("PEER_TOKEN", "change-me"),
-        API_KEYS=f"dev-officer:officer-{region}-1:officer",
+        API_KEYS=",".join((f"dev-officer:officer-{region}-1:officer", f"dev-supervisor:supervisor-{region}-1:supervisor",
+                           f"dev-admin:admin-{region}-1:admin")),  # the web console's live mode uses all three
         PYTHONPATH=str(ROOT),
     )
     return env
