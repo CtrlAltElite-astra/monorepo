@@ -6,8 +6,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from region import config, store
-from region.api import routes_reports, routes_status
+from region.api import routes_reports, routes_review, routes_status
 from region.sync import carry, client, routes_admin, routes_sync
+from region.trust import true_hook
 
 
 @asynccontextmanager
@@ -23,9 +24,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=f"SyncShield region {config.settings.region}", version="1", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*", "Authorization", "Content-Type", "Idempotency-Key", "X-API-Key"])
 app.include_router(routes_reports.router)
+app.include_router(routes_review.router)
 app.include_router(routes_status.router)
 app.include_router(routes_sync.router)
 app.include_router(routes_admin.router)
 app.include_router(carry.router)
+true_hook.install(app)  # no-op unless AUTH_ENABLED=true (TRUE credential sessions)

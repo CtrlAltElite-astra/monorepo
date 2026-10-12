@@ -43,14 +43,16 @@ def _wall() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-def request_hash(report_id, type_, field, value, expected) -> str:
+def request_hash(report_id, type_, field, value, expected, bind_actor=None) -> str:
     body = [report_id, type_, field, value, sorted(expected) if expected is not None else None]
+    if bind_actor is not None:   # auth mode: an op_id belongs to the actor who first used it
+        body.append(bind_actor)
     return hashlib.sha256(canonical.dumps(body).encode("utf-8")).hexdigest()
 
 
 def _observed(conn, report_id: str, type_: str, field, value):
     """Event ids the writer had seen, for the CLOSE_VS_NEW_INFO rule; None when not applicable."""
-    if type_ == "SET" and field == "status" and value in CLOSED:
+    if type_ in ("SET", "RESOLVE") and field == "status" and value in CLOSED:
         evs = store.events_for(conn, report_id)
         ids = [e["event_id"] for e in evs
                if e["type"] == "NOTE" or (e["field"] == "severity" and e["type"] in ("SET", "RESOLVE"))
@@ -62,13 +64,19 @@ def _observed(conn, report_id: str, type_: str, field, value):
     return None
 
 
-def local_write_ex(report_id, type_, field, value, actor, expected=None, op_id=None, new_report_id=None):
+def local_write_ex(report_id, type_, field, value, actor, expected=None, op_id=None, new_report_id=None,
+                   provenance=None, reason=None):
     """Append one event (or return the one this op_id already produced).
+
+    `provenance` (auth mode only): {"role", "auth_mode", "credential_id"} taken from the VERIFIED session. It is
+    placed in the envelope BEFORE hashing and signing, so it is part of the signed history, and it also binds
+    the op_id to the actor. `reason` is required by RESOLVE.
 
     Returns (event, replayed). Raises NotFound, StaleEdit, OpIdReuse, ReportExists.
     """
     region = config.settings.region
-    rh = request_hash(new_report_id if type_ == "CREATE" else report_id, type_, field, value, expected)
+    bind = actor if provenance is not None else None
+    rh = request_hash(new_report_id if type_ == "CREATE" else report_id, type_, field, value, expected, bind)
     with store.tx() as conn:
         if op_id:
             hit = store.op_get(conn, op_id)
@@ -83,6 +91,8 @@ def local_write_ex(report_id, type_, field, value, actor, expected=None, op_id=N
                 same_target = type_ == "CREATE" or prior["report_id"] == report_id
                 if prior["type"] != type_ or not same_target:
                     raise OpIdReuse(op_id)
+                if provenance is not None and prior.get("actor") != actor:
+                    raise OpIdReuse(op_id)   # someone else's operation: never hand out their result
                 return prior, True
         if type_ == "CREATE":
             if new_report_id and store.report_exists(conn, new_report_id):
@@ -100,9 +110,14 @@ def local_write_ex(report_id, type_, field, value, actor, expected=None, op_id=N
         ev = dict(
             v=1, event_id=f"{region}:{seq}", origin=region, seq=seq, report_id=report_id,
             type=type_, field=field, value=value, supersedes=live, hlc=[h[0], h[1]],
-            priority=1, actor=actor, reason=None, wall=_wall(), sig=None,
+            priority=1, actor=actor, reason=reason, wall=_wall(), sig=None,
             op_id=op_id, observed=_observed(conn, report_id, type_, field, value) if type_ != "CREATE" else None,
         )
+        if provenance is not None:   # before canonical hashing and signing, never attached afterwards
+            ev.update(role=provenance.get("role"), auth_mode=provenance.get("auth_mode"),
+                      credential_id=provenance.get("credential_id"))
+            if type_ == "CREATE":
+                ev["owner"] = actor   # immutable cart owner, replicated through the signed event log
         ev["hash"] = canonical.event_hash(ev)
         ev["sig"] = signing.sign(region, ev["hash"])  # None when no key is provisioned
         store.insert_event(conn, ev)
@@ -112,6 +127,8 @@ def local_write_ex(report_id, type_, field, value, actor, expected=None, op_id=N
     return ev, False  # committed
 
 
-def local_write(report_id, type_, field, value, actor, expected=None, op_id=None, new_report_id=None) -> dict:
+def local_write(report_id, type_, field, value, actor, expected=None, op_id=None, new_report_id=None,
+                provenance=None, reason=None) -> dict:
     """Same as local_write_ex but returns only the event (kept for existing callers and tests)."""
-    return local_write_ex(report_id, type_, field, value, actor, expected, op_id, new_report_id)[0]
+    return local_write_ex(report_id, type_, field, value, actor, expected, op_id, new_report_id,
+                          provenance, reason)[0]
