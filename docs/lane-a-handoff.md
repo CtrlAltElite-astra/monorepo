@@ -1,206 +1,167 @@
-# Lane A (Akshit) — handoff and progress log
+# Lane A (Akshit) — handoff and progress log (SyncShield main build v1.1)
 
-Purpose: let any engineer or coding agent continue Lane A from exactly where it stopped, with no
-other context. Read this file first, then the two build-plan PDFs (Basic = PDF 1, Main = PDF 2).
-**Keep the "Progress log" and the checklists up to date after every milestone.**
+Purpose: let any engineer or coding agent continue Lane A from exactly where it stopped, with no other
+context. Read this file first, then `SyncShield_Main_Build_Plan_v1.1.pdf` (the single source of truth for the
+main build; PDF 1 "Basic Build" still applies, read "Lifeboat" there as "SyncShield").
+**Update the status board and the progress log after every milestone.**
 
-Last updated: 2026-10-12 (Basic build merged to `main`; PDF 2 Phase 1 for Lane A built and tested on branch `a/phase1-roles-history`, awaiting PR/merge)
+Last updated: see the newest entry of the progress log at the bottom.
 
 ---
 
 ## 1. Project in one paragraph
 
-**SyncShield** (CodeAstra 2.0, RGIT, PS2: geo-distributed disaster data replication with graceful
-degradation). Each region (mum :8001, pun :8002, later del :8003) is an independent FastAPI +
-SQLite service that always accepts writes. Every change is an immutable signed-later event; a
-region's visible data is `derive(event_set)`; replication copies missing events (pull by per-origin
-gap-free watermark). AP + strong eventual consistency. Stack: Python FastAPI, SQLite (WAL,
-`synchronous=FULL`, one file per region), httpx, React + Vite dashboard.
+**SyncShield** (CodeAstra 2.0, RGIT, PS2). A multi-region data layer: each node (Mumbai :8001, Pune :8002, Delhi
+:8003) is an independent FastAPI + SQLite service that always accepts writes. Every change is an immutable, signed
+event; a node's visible data is `derive(event_set)`; replication copies missing events (pull by per-origin gap-free
+watermark plus a best-effort push). When a node dies the browser SDK fails over to the next node with the same
+`op_id` and **carries** the signed events it holds, so no acknowledged write is lost. AP + strong eventual
+consistency, no consensus. Demo domain: an online shop (carts); the backend stays domain neutral.
 
-## 2. Team lanes and file ownership (from OWNERS.md)
+## 2. Lanes and ownership
 
 | lane | person | owns |
 |---|---|---|
-| **A** | **Akshit (me)** | `contracts/`, `region/main.py`, `region/store.py`, `region/auth.py`, `region/migrations/`, `region/api/`, `region/trust/`, `requirements.txt`, `tests/api/` |
-| B | Rahil | `region/engine/`, `tests/engine/`, `tests/fuzz/`, `docs/conflict-policy.md` |
-| C | Miti | `dashboard/`, `docs/` (except conflict-policy), `README.md` |
-| D | Simrit | `region/sync/`, `region/config.py`, `.env.example`, `scripts/`, `tests/integration/` |
+| **A** | **Akshit** | `contracts/`, `migrations/`, `region/main.py`, `store.py`, `auth.py`, `region/api/`, `region/trust/`, `requirements.txt`, `tests/api/`, and (this build) the generated `web/` until hand-off |
+| B | Rahil | `region/engine/` (derive, policy, priority, digests, signing), `tests/engine/`, `tests/fuzz/`, `docs/conflict-policy.md` |
+| C | Miti | `web/` after hand-off, `scripts/chaos_agent.py`, `fixtures/`, `docs/`, README structure |
+| D | Simrit | `region/sync/` (pull, push, ingest, carry, status), `region/config.py`, `.env.example`, `scripts/run_*`, `tests/integration/` |
 
-Rules: branches `a/…`; never edit another lane's files (ask the owner); `contracts/*` and
-`migrations/*` are **additive only** (new optional fields), with a line in `contracts/CHANGELOG.md`;
-no force-push; one Uvicorn worker per region; a write never calls a peer; no code copied from
-reference repos.
+Rules: branches `a/…`; never edit another lane's files (ask the owner; put the request in section 7);
+`contracts/*` and `migrations/*` are additive only, with a CHANGELOG line; no force-push; one Uvicorn worker per
+region; a write never calls a peer; no code copied from reference repositories.
 
 **Commit identity rule (hard requirement from the user):** every commit is authored by
-`Akshit Sharma <akshitsharma24@spit.ac.in>` (already in git config). No co-author trailers or
-auto-generated attribution lines, and no tool names, in commit messages, PR text, code comments or docs.
+`Akshit Sharma <akshitsharma24@spit.ac.in>` (already in git config). No co-author trailers or auto-generated
+attribution lines, and no tool names, in commit messages, PR text, code comments or docs.
 
-## 3. Repo and branch
+## 3. Branch and repo state
 
-- Remote: `https://github.com/CtrlAltElite-astra/monorepo` (default branch `main`).
-- `main` started as ONE commit by Miti that already contained a working Basic build for all four lanes.
-  Since then merged via PRs: #1 Lane A basic build (mine), #2 Miti's dashboard/docs (`lane-c`),
-  #3 Rahil's engine tests/docs (`lane-B-basic-build`). Lane D (Simrit) had no branch yet when last checked.
-- `a/lane-a-basic-build`: merged (PR #1), done.
-- **Current branch: `a/phase1-roles-history`** (from `main` at `e732a31`): PDF 2 Phase 1 for Lane A.
-  Pushed to origin; PR not opened yet (the user opens/merges PRs; label it `contract`).
-- Working copy on the user's machine: `C:\Users\dell\Desktop\Codeastra\monorepo` (Windows 11,
-  PowerShell; Python 3.14 venv at `.venv`, Node 24).
+- Remote `https://github.com/CtrlAltElite-astra/monorepo`, default branch `main`.
+- **Working branch: `a/akshit-main`** (from `main`, plus the unmerged docs branch `a/post-merge-notes`). It replaces the
+  earlier Lane A branches `a/lane-a-basic-build`, `a/phase1-roles-history` (both merged by PRs #1 and #4) and
+  `a/post-merge-notes` (merged into this branch). Delete those three remote branches only after this one is pushed.
+- There is an **untracked folder `frontend 2/`** in the repo root (someone's earlier generated incident-report dashboard,
+  with `node_modules` inside). It is not part of this build: never `git add -A`; stage files by name.
 
-## 4. How to run everything
+## 4. Status board against the plan (Lane A rows)
+
+Legend: [x] done and tested · [~] partly · [ ] not started · [D]/[B]/[C] waiting on another lane
+
+### Backend
+- [x] Contract v1.1 (`contracts/contracts.md`, `schemas.py`, `CHANGELOG.md`, status fixture) and migration `002_op_id.sql`
+- [x] Migration runner in `store.py` (001 idempotent each start; later files once, in a transaction, recorded in `schema_migrations`)
+- [x] Signing: Miti's `region/engine/signing.py` is the single implementation (my earlier `trust/keys.py` was dropped in the merge);
+      each region provisions its own key at start, and the shared registry update is now locked + atomic (fixed a 3-regions-at-once race)
+- [x] Write path v2: `op_id` idempotency (also for events that arrived by replication/carry), client `report_id`,
+      signed event in every 2xx body, `observed` plumbing, roles + `auth_mode`, push hand-off after commit
+- [x] `POST /v1/reports/{id}/resolve` (supervisor, 409 guards) and `GET /v1/review` with full receipts
+- [x] `GET /v1/reports/{id}/history` with `sig_status` and `carried`
+- [x] `/v1/status` v1.1 (peers `acked`/`last_ok_ms`, computed `risk`, nullable `queues`/`carry`)
+- [x] CORS explicit origin list, body-size bound, startup key provisioning
+- [x] Tests T7, T10, T16 (A part), A9, 403/409/422 paths: `tests/api/` (see section 5)
+- [ ] Partner HTTP adapter with cache and fallback + T13 (tier 2-c; interface, contract and mock already exist)
+- [ ] README API samples (`docs/api.md`)
+### Frontend (`web/`) — built, light + dark themes, animated
+- [x] Vite + React + TypeScript project, story page `/` (animated mesh, claims, 8-step failover walkthrough, four ideas, rules, limits)
+- [x] Console `/demo`: storefront, 3 node cards with the degradation ladder, request dots, 4 counters, data-at-risk meter,
+      tabs Carts / Network / Review / Outbox / Security / Metrics / API / Prove it, history drawer, resolve dialog, heal banner, toasts
+- [x] Browser SDK (probes, same-op_id retries, carry before first request on a new node, outbox pruning, failback, device queue)
+- [x] Mock mode = in-browser simulator of 3 nodes behind the SAME REST paths as the real nodes; live mode = fetch (`?mode=live`)
+- [x] Tests: 56 (derive policy v1, op_id groups, close-vs-new-info, convergence, tamper, ladder, zero-loss failover T17/T20, outbox T19)
+- [x] Verified in a real browser (mock): A1 add + replicate, A2 kill a node under auto-shoppers = 0 errors and "acknowledged = present on survivors",
+      A3 restart -> RECOVERING -> HEALTHY -> CONVERGED, UNKNOWN (never green) while a node is down, partition button
+- [x] Verified in a real browser (LIVE, real nodes :8001-8003): 3 nodes HEALTHY, add-to-cart saved + replicated, API view
+- [ ] NOT yet exercised in a browser (logic is unit-tested): resolve dialog + 409/403, tamper button, Prove it, Burst, join Delhi live, dark-theme pass on every panel, phone layout review
+- [ ] Hand-off to Miti, `scripts/run_web.*`, `.env.example` keys, README link, CI step, remove `dashboard/` (do as a SEPARATE final commit)
+### Waiting on other lanes
+- Now ON `main` (Lane C's merge): `engine/signing.py`, policy v1 + op_id rule + CLOSE_VS_NEW_INFO in `derive`, `sync/carry.py` (`/healthz`, `/v1/carry`, `/v1/events/has`), `scripts/chaos_agent.py`, fixtures.
+- [B] `priority.classify` (I reuse Lane D's `classify_priority` through one call in `writes._priority`)
+- [D] ingest that fails closed on unsigned events (strict xfail test flags it), levels CONSTRAINED/RECOVERING, queues in the snapshot
+
+## 5. How to run and test
 
 ```powershell
 cd C:\Users\dell\Desktop\Codeastra\monorepo
-python -m venv .venv                      # once
+python -m venv .venv                                          # once
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m pytest tests/api -q              # Lane A tests (in-process)
-.\.venv\Scripts\python.exe -m pytest tests/engine tests/integration -q   # baseline, other lanes
-.\.venv\Scripts\python.exe scripts/run_regions.py              # mum :8001 + pun :8002, data/*.db
-.\.venv\Scripts\python.exe scripts/gen_fixtures.py             # regenerate contracts/fixtures/*.json
-cd dashboard; copy .env.example .env; npm install; npm run dev # http://localhost:5173
+.\.venv\Scripts\python.exe -m pytest tests -q                 # whole repo
+.\.venv\Scripts\python.exe -m pytest tests/api -q             # Lane A only (in-process, ~15 s)
+.\.venv\Scripts\python.exe scripts/run_regions.py             # mum :8001 + pun :8002; each region creates its own key on first start
+.\.venv\Scripts\python.exe scripts/gen_fixtures.py            # regenerate contracts/fixtures/*.json
 ```
 
-Baseline before any Lane A change: `pytest tests/engine tests/integration` -> **17 passed**.
+Test status at the last update: see the progress log. Lane A files: `test_reports_api.py`, `test_write_path_v2.py`,
+`test_trust_and_infra.py`, `test_status_api.py`, `test_store.py`, `test_roles.py`, `test_contracts.py`,
+`test_crash_recovery.py` (real process, kill -9). One strict `xfail` documents that Lane D's ingest still accepts
+unsigned foreign events; remove it when ingest fails closed.
 
-## 5. Lane A scope (PDF 1, Basic build)
+### Running links (as left on 2026-10-12)
 
-Acceptance ("done when"):
-1. `POST /v1/reports` on mum returns 201 with `event_id` `mum:1`; the row exists after a process restart.
-2. Two quick PATCHes on the same field produce **no** conflict (second supersedes first).
-3. Stopping pun does not change mum's write latency or response.
-4. `GET /v1/status` returns the 4.3 shape with real heads.
+| what | URL |
+|---|---|
+| Story page | http://localhost:5173/ |
+| Console, mock (simulator, no backend needed) | http://localhost:5173/demo |
+| Console, LIVE against the real nodes | http://localhost:5173/demo?mode=live |
+| Console, start with 2 nodes (join Delhi live) | http://localhost:5173/demo?nodes=2 |
+| Mumbai API + docs | http://127.0.0.1:8001/docs · /v1/status |
+| Pune API + docs | http://127.0.0.1:8002/docs |
+| Delhi API + docs | http://127.0.0.1:8003/docs |
 
-Basic API owned by Lane A: `POST /v1/reports`, `PATCH /v1/reports/{id}` (`expected` -> 409),
-`POST /v1/reports/{id}/notes`, `GET /v1/reports[/{id}]`, `GET /v1/status` (shared with D),
-`GET /v1/health`. Reserved for PDF 2 (do not reuse): `/resolve`, `/v1/review`, `/history`,
-`/internal/v1/sync/push`, `/v1/metrics`, `/admin/config`, `/admin/burst`.
+Start them: `.\.venv\Scripts\python.exe scripts/run_regions.py mum pun del` (backend) and `cd web; npm install; npm run dev` (frontend).
+Dev keys: `dev-officer` is the only key `run_one.py` provisions (see section 7).
 
-## 6. What Lane A has done
+**Live mode today:** the SDK falls back to `/v1/health` because `/healthz` is Lane D's. Until Lane D adds `/healthz`, `/v1/carry`,
+`/v1/events/has` (and the chaos agent on :9000), live mode shows nodes, carts, replication and the API view, but failover,
+"present on survivors", Crash/Restart and Tamper need those endpoints (the UI says so instead of faking it). Mock mode shows all of it.
 
-### Already in `main` (Miti's initial commit; verified working)
-`store.py` (tx = BEGIN IMMEDIATE under an RLock, gap-free `next_seq`, HLC persisted in `node_meta`,
-`insert_event_if_absent` new/dup/mismatch, views, quarantine), `migrations/001_init.sql` (all 9
-tables, idempotent), `api/writes.py` (local write path: seq + HLC + hash + event + view in one tx,
-201 only after commit), `api/routes_reports.py`, `api/routes_status.py`, `auth.py` (API key ->
-actor, role), `main.py` (lifespan: init DB, start pull loop), `contracts/` (envelope, fields,
-`validate_field`, 3 fixtures).
+## 6. Design decisions worth knowing
 
-### My changes on branch `a/lane-a-basic-build`
-- [x] Contracts (additive): `schemas.py` gains `LEVELS` (adds CONSTRAINED, RECOVERING, OVERLOADED),
-      `REPLICATION_STATES`, `RISK_KEYS`, `QUEUE_KEYS`; `contracts.md` sections 4.1 (level ladder),
-      4.2 (nullable `risk` and `queues`), 4.3 (list ordering/paging); `CHANGELOG.md` entry;
-      `scripts/gen_fixtures.py` + regenerated `fixtures/status.json` with sample `risk`/`queues`.
-- [x] `GET /v1/status` now always returns `risk` and `queues` (null until Rahil's `engine/risk.py`
-      and Simrit's push queue fill them; read from `state.snapshot()` via `.get`).
-- [x] `GET /v1/reports`: ordered newest-first by the CREATE event `(hlc, origin, seq)` (same order on
-      every region; old code sorted by per-origin seq, which is not chronological across regions);
-      `limit`/`cursor` validated (>= 0, limit clamped 1..500). New `store.report_ids_newest_first`.
-- [x] `PATCH` body: `value` is now required (null allowed to clear nullable fields).
-- [x] `main.py` lifespan awaits the cancelled pull task before closing the DB.
-- [x] `tests/api/conftest.py` (in-process region fixture, `mk_event` peer-event factory).
-- [x] `tests/api/test_reports_api.py`: create/patch/notes/validation/401/404/409/list/ordering/badges/
-      write-never-calls-peer/hung-peer/restart (56 tests incl. parametrised; status 8, store 7, contracts 36).
-- [x] `tests/api/test_status_api.py`: status shape vs fixture, heads, digests, nullable blocks.
-- [x] `tests/api/test_store.py`: concurrent gap-free seq, rollback, WAL/synchronous=FULL, region guard.
-- [x] `tests/api/test_contracts.py`: fixture hashes, schemas stays stdlib-only, doc/code parity.
-- [x] Full suite green: `pytest tests` -> **124 passed** (107 in `tests/api`, 17 engine + integration).
-      Mutation check done: the ordering, status-shape and `value`-required tests fail on the original code.
-- [x] Real-process walkthrough of PDF 1 section 8 passed (20/20 checks: replication, hard kill + restart,
-      catch-up, partition both ways, heal, identical conflict on both regions).
-- [x] Acceptance 3 measured: mum write latency p50 2.9 ms with pun alive vs 2.4 ms with pun killed.
-- [x] Dashboard still builds (`npm ci && npm run build`).
-- [x] Commit (author Akshit only, no trailers) and push `a/lane-a-basic-build`.
+- Signature = Ed25519 over the ASCII bytes of the event's hex `hash`, base64 (`region/engine/signing.py`; `region/trust/signing.py`
+  re-exports it for the ingest hook). `sign(region, hash)` is None when no key is provisioned (events stay unsigned and carry refuses them).
+  Keys: `keys/<region>.key` (git-ignored); registry `region/trust/public_keys.json` (git-ignored, generated). `run_one.py`
+  provisions every region up front and each region also provisions itself at start. Known gap vs my earlier design: nothing stops
+  a region id from silently taking a NEW key if its private key file is deleted (the registry entry is overwritten).
+- The history `carried` flag is set by `sync/carry.py` calling `store.mark_carried` for each newly accepted carried event.
+- Replays are decided from the events themselves (`events.op_id` index), not a separate idempotency table: the same
+  rule covers writes done here, replicated, or carried. The `idempotency` table from migration 001 is unused.
+- `receipts.receipt()` passes an engine receipt through if it has `candidates`, else builds the same shape from stored
+  events, so the API is correct on engine v0 (today) and v1 (Rahil).
+- Priority uses Simrit's existing `region.sync.push.classify_priority` (one classifier for the system); swap the single
+  call in `writes._priority` for `engine.priority.classify` when Lane B delivers it.
+- After commit, `writes._after_commit` hands the event to `push.enqueue` via `loop.call_soon_threadsafe` (the push queue is
+  an asyncio queue; routes run in worker threads). Failure is harmless: the log is the outbox.
+- Reads need no key (older clients and scripts GET without one); writes need an officer or supervisor key.
 
-**Basic build status for Lane A: COMPLETE.** All four PDF 1 acceptance checks are covered by tests and
-were observed against real processes.
+## 7. Requests and findings for other lanes (do not fix in Lane A files)
 
-### PDF 2 Phase 1 (branch `a/phase1-roles-history`) — built and tested
-- [x] **Roles**: `region/trust/roles.py` (pure table: officer/supervisor write; supervisor resolves;
-      admin = /admin only, NOT a report writer; unknown role denied). `region/auth.py` gains
-      `require(action)`; the three write routes use it. 401 unknown/missing key, 403 wrong role,
-      checked before body validation, nothing stored. `require_key` kept (Simrit's `/admin` guard uses it).
-- [x] **Trust adapter interface**: `region/trust/adapter.py` (`TrustAdapter`, `AuthDecision`,
-      `EvidenceVerdict`, `AnchorReceipt`, `TrustVerdict`, default `LocalKeyAdapter`, `get_adapter`/
-      `set_adapter`). Unsupported methods return neutral results, never raise. Auth decisions already go
-      through the adapter, so the Phase 2 partner adapter only needs to be swapped in.
-- [x] **Partner contract page**: `contracts/partner-contract.md` (PROPOSED, not agreed with a partner).
-- [x] **Consistency block**: report `consistency` = `{replication, confirmed_by, awaiting, stale_possible}`
-      (`routes_reports._consistency`; reachability from `state.snapshot()` once per request).
-- [x] **`GET /v1/reports/{id}/history`**: plain array of full events in `(hlc, origin, seq)` order
-      (matches what Miti's dashboard assumed).
-- [x] **kill -9 test**: `tests/api/test_crash_recovery.py` — real process, 4 concurrent writers, hard kill
-      mid-stream; every acknowledged id present, seq gap-free and continues, views == creates, clock moves on.
-- [x] Contracts/fixtures/CHANGELOG updated (`contracts.md` 3.1 roles, 4.0 consistency, history row,
-      `schemas.CONSISTENCY_KEYS`); contract-parity tests added.
-- [x] Whole repo: `pytest tests` -> **156 passed**. Real-process check (2 regions): consistency goes
-      REPLICATED -> LOCAL_ONLY + stale on a cut -> REPLICATED after heal; history identical on both regions.
+- **Simrit, ingest fails open:** `region/sync/ingest.py` verifies only events whose `sig` is not null and silently skips
+  verification when `region.trust.signing` is missing, so stripping `sig` bypasses it. Foreign events must carry a valid
+  `sig` once signing is on (quarantine `unsigned`). My xfail test flips when this is fixed.
+- **Simrit, carry/healthz/has:** now on `main` (written in Lane C's merge). Contract in `contracts/contracts.md` 3.2.
+- **Simrit, keys:** `scripts/run_one.py` only provisions `dev-officer`. Add `dev-supervisor` and `dev-admin`
+  (`key:actor:role`) so the supervisor/resolve and admin paths can be demoed live.
+- **Rahil:** `engine/signing.py` and policy v1 are on `main`. When `derive` changes again, run `python scripts/gen_fixtures.py` and commit the fixtures.
+- **Miti:** `dashboard/` is replaced by `web/` (plan section 7). Chaos agent contract: `POST :9000/crash/{region}`,
+  `POST :9000/start/{region}`, `GET :9000/state`, header `X-Admin-Key`.
 
-## 7. Design decisions worth knowing
+## 8. Progress log (newest at the bottom)
 
-- Event ids are `<origin>:<seq>`; report ids are `R-<origin>-<seq of CREATE>` (no coordination).
-- Validation (`schemas.validate_field`, pydantic bounds) runs at **write time only**; received events
-  are checked for shape/hash/identity only (never against business rules).
-- `consistency` is computed from `peer_view`: a peer confirms a report when its last summary shows
-  `seq >= max seq per origin` of the report's events. `stale_possible` = ANY configured peer is
-  unreachable now (even one that confirmed), per PDF 2 6.8.
-- GET endpoints are unauthenticated; writes need `X-API-Key` with role officer or supervisor (admin is
-  deliberately not a report writer, per the PDF 2 role table).
-- Auth decisions go through `region.trust.adapter.get_adapter()`; tests swap it with `set_adapter`.
-- Tests patch `config.settings` (module attribute, frozen dataclass replaced with
-  `dataclasses.replace`); all code reads `config.settings.<x>` at call time, so this is safe.
+- 2026-10-12 earlier — Basic build and Phase 1 merged to `main` (PRs #1, #4); all lanes' basic builds on `main`, 162 tests.
+- 2026-10-12 — New plan SyncShield v1.1 adopted. Created `a/akshit-main`. Backend milestone done: migration 002, key and
+  signing seam, write path v2 (op_id, report ids, signed events, observed, roles), resolve/review/history/status v1.1,
+  CORS and body bound, contract v1.1 + changelog + fixtures. Whole repo: 228 passed, 1 xfailed (before the contract-doc
+  tests were added); `tests/api`: 195 passed, 1 xfailed. Next: the `web/` frontend.
+- 2026-10-12 (stop point, session limit) — Frontend `web/` built and verified (see section 4). Final checks before this stop:
+  whole repo `pytest tests` = 229 passed, 1 xfailed (intended); web: `tsc` clean, 56 tests, `npm run build` OK; browser scenario in mock
+  mode 13/13 checks; live-mode smoke against the real nodes 7/7 checks. Everything is committed locally on `a/akshit-main`;
+  NOT pushed yet (the user pushes, or asks for the push). After pushing, delete the old remote branches `a/lane-a-basic-build`,
+  `a/phase1-roles-history`, `a/post-merge-notes` (all their commits are contained in `a/akshit-main` or already on `main`).
 
-## 8. Known gaps / not started (PDF 2, Lane A)
-
-Phase 1: DONE (see section 6). Not done from Phase 1: nothing for Lane A.
-**Phase 2 (next):** `POST /v1/reports/{id}/resolve` + `GET /v1/review` (409 stale guard, role
-`supervisor`; needs Rahil's receipts/policy v1 in `derive`), Ed25519 per-region signing in `trust/`
-(`sig` over the hex hash; verify hook in Simrit's ingest; tests T10), idempotency keys
-(`Idempotency-Key` header, table already exists), `observed` field on events (CLOSE_VS_NEW_INFO),
-event `auth` block, real partner HTTP adapter with cache + fallback (T13).
-Phase 3: `/v1/metrics` writes, bounded write queue + `OVERLOADED`, `/admin/config` coordination with Simrit.
-Phase 4: negative security tests (T10, T13), README API samples with curl.
-
-## 8b. Findings for other lanes (not Lane A files; do not fix here, tell the owner)
-
-- **Simrit (`scripts/run_regions.py`)**: the supervisor loop exits and terminates ALL regions as soon as
-  any one process dies. So "stop one region, restart it" (README restart proof) only works when each
-  region is started separately with `python scripts/run_one.py <region>`. A hard kill of pun through
-  `run_regions.py` also takes mum down.
-- **Simrit (`state.snapshot`)**: a peer never contacted yet counts as unreachable, so a fresh region
-  with a configured peer shows `ISOLATED` until the first successful pull (about one interval).
-  Honest, but the dashboard will flash ISOLATED at start-up.
-- **Rahil / Simrit**: `/v1/status` now returns `risk` and `queues` (null). Fill them by adding
-  `"risk"` / `"queues"` keys to the dict returned by `state.snapshot()`; no change needed in the route.
-- (Fixed by Miti already: `run_regions.py` no longer stops every region when one dies.)
-
-### Asks created by Phase 1 (for the owners; not done here because they are not Lane A files)
-- **Simrit** (`region/config.py`, `scripts/run_one.py`): provision default keys so roles can be demoed:
-  `dev-officer:officer-<r>-1:officer`, `dev-supervisor:supervisor-<r>-1:supervisor`,
-  `dev-admin:admin-<r>-1:admin`. Today only `dev-officer` exists, so nobody can act as supervisor.
-- **Simrit** (`region/sync/routes_admin.py`): when ready, gate `/admin/*` with `require("admin")` from
-  `region.auth` instead of `require_key`. NOT done yet on purpose: the dashboard and
-  `tests/integration` call `/admin/links` with the officer key, so switching needs the admin key
-  provisioned and those callers updated in the same change.
-- **Miti**: `VITE_SUPERVISOR_KEY` (resolve button) should be `dev-supervisor` once that key exists;
-  an officer key gets 403 on resolve. Reports now carry `consistency.confirmed_by/awaiting/stale_possible`
-  (the drawer already reads `stale_possible`).
-- **Simrit**: `scripts/mock_partner.py` should implement the endpoints in `contracts/partner-contract.md`.
-- **Rahil**: when policy v1 changes `derive`, run `python scripts/gen_fixtures.py` and commit the fixtures;
-  `tests/api/test_contracts.py::test_report_fixture_is_what_derive_produces` fails until you do.
-
-## 9. Progress log (append newest at the bottom)
-
-- 2026-10-12 — Cloned monorepo; analysed both PDFs and Miti's commit. Baseline 17 tests pass.
-- 2026-10-12 — Created branch `a/lane-a-basic-build`; contract additions (status `risk`/`queues`,
-  level ladder, list ordering) done; store/route/main hardening done; `tests/api/conftest.py` written.
-  Next: write the four API test modules, run everything, push.
-- 2026-10-12 — API test suite written (107 tests), full suite 124 passed, real-process walkthrough and
-  latency check passed, dashboard builds. Handoff doc finalised for the Basic build; committing and
-  pushing `a/lane-a-basic-build`. **Next (after the user confirms): PDF 2 Phase 1 for Lane A**
-  (roles enforcement, consistency block `confirmed_by`/`awaiting`/`stale_possible`,
-  `GET /v1/reports/{id}/history`, kill -9 test, partner adapter interface + contract page).
-- 2026-10-12 — PRs #1 (Lane A), #2 (Miti), #3 (Rahil) merged into `main`; 135 tests green on merged `main`.
-  Started and finished Phase 1 on `a/phase1-roles-history`: roles + adapter interface, partner contract,
-  consistency block, history endpoint, kill -9 test. 156 tests green; real-process check passed.
-  **Next: open a PR for `a/phase1-roles-history` (label `contract`), then Phase 2** (resolve/review,
-  Ed25519 signing, idempotency keys), which depends on Rahil's policy v1 receipts landing in `main`.
+  **Left to do (Lane A, from the plan):**
+  1. Exercise in a browser: resolve dialog (409 stale, 403 officer = A9), Tamper (A6), Prove it (A8), Burst 300 (A7), join Delhi live (A10), dark pass on every panel, phone layout.
+  2. Frontend hand-off to Miti: `scripts/run_web.*`, `web/.env.example` (VITE_* keys), `web/README.md`, link from the main README, CI `npm run build`, then delete `dashboard/` as a separate commit; plan B if not merged by the deadline: keep `dashboard/`.
+  3. Partner HTTP adapter with cache and fallback (T13, tier 2-c) against Simrit's `scripts/mock_partner.py`; negative tests T10 (done at ingest) and T13.
+  4. README API samples with curl (`docs/api.md`).
+  5. Trial-and-Reward hardening on `main` (oversize input and error bodies are done; write-queue 503 is tier 2-b, needs Lane D's knobs).
+  6. Waiting on others, then re-verify: Lane D `/healthz`, `/v1/carry`, `/v1/events/has`, ingest that fails closed on unsigned events (flip the xfail), levels CONSTRAINED/RECOVERING; Lane B policy v1 + op_id rule + CLOSE_VS_NEW_INFO in the real `derive`; Lane C chaos agent on :9000.

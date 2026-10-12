@@ -11,7 +11,7 @@ from fastapi import Header, HTTPException
 
 from region.trust import adapter
 
-Auth = namedtuple("Auth", "actor role")
+Auth = namedtuple("Auth", "actor role mode", defaults=("online",))  # mode: online | cached | stale (event.auth_mode)
 
 
 def require_key(x_api_key: str = Header(None)) -> Auth:
@@ -19,7 +19,7 @@ def require_key(x_api_key: str = Header(None)) -> Auth:
     d = adapter.get_adapter().verify_actor(x_api_key, None)
     if not d.allowed:
         raise HTTPException(401, "missing or unknown X-API-Key")
-    return Auth(d.actor, d.role)
+    return Auth(d.actor, d.role, d.mode)
 
 
 def require(action: str):
@@ -27,7 +27,7 @@ def require(action: str):
     def dependency(x_api_key: str = Header(None)) -> Auth:
         d = adapter.get_adapter().verify_actor(x_api_key, action)
         if d.allowed:
-            return Auth(d.actor, d.role)
+            return Auth(d.actor, d.role, d.mode)
         if d.reason == adapter.UNKNOWN_CREDENTIAL:
             raise HTTPException(401, "missing or unknown X-API-Key")
         raise HTTPException(403, f"role '{d.role}' may not {action}")

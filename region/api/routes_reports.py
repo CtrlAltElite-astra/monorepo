@@ -1,4 +1,10 @@
-"""POST/PATCH/GET /v1/reports (owner: Akshit; v1.1 op_id / signed event by Miti)."""
+"""POST / PATCH / GET /v1/reports, notes and history (owner: Akshit).
+
+Write responses (contract v1.1): {"report": <view>, "event": <full signed envelope>, "event_id", "consistency"}.
+A retried write (same op_id, or the Idempotency-Key header) answers 200 with the original event and the header
+`Idempotent-Replay: true`; the same op_id with a different body is 409 op_id_reuse.
+"""
+import re
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -7,12 +13,16 @@ from pydantic import BaseModel, Field
 
 from contracts import schemas
 from region import config, store
-from region.api import writes
+from region.api import receipts, writes
 from region.auth import require
+from region.engine import canonical
 from region.engine.derive import order
 from region.sync import state
+from region.trust import signing
 
 router = APIRouter(prefix="/v1", tags=["reports"])
+
+_OP = dict(default=None, min_length=1, max_length=schemas.OP_ID_MAX)
 
 
 class Location(BaseModel):
@@ -21,27 +31,26 @@ class Location(BaseModel):
 
 
 class CreateReport(BaseModel):
-    title: str = Field(min_length=1, max_length=120)
+    report_id: Optional[str] = Field(default=None, pattern=schemas.CLIENT_REPORT_ID_PATTERN)
+    op_id: Optional[str] = Field(**_OP)
+    title: str = Field(min_length=1, max_length=schemas.MAX_TITLE)
     category: str
     severity: int = Field(ge=1, le=5)
     location: Optional[Location] = None
-    description: Optional[str] = Field(default=None, max_length=2000)
+    description: Optional[str] = Field(default=None, max_length=schemas.MAX_DESCRIPTION)
     people_estimate: Optional[int] = Field(default=None, ge=0)
-    # v1.1 (optional): a retried create with the same op_id is applied once
-    op_id: Optional[str] = Field(default=None, min_length=1, max_length=80)
-    report_id: Optional[str] = Field(default=None, max_length=40)
 
 
 class PatchReport(BaseModel):
     field: str
     value: Any  # required, but null is allowed (clears assigned_team, location, people_estimate)
-    expected: Optional[list[str]] = None
-    op_id: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    expected: Optional[list[str]] = Field(default=None, max_length=schemas.MAX_SUPERSEDES)
+    op_id: Optional[str] = Field(**_OP)
 
 
 class NoteBody(BaseModel):
-    text: str = Field(min_length=1, max_length=2000)
-    op_id: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    text: str = Field(min_length=1, max_length=schemas.MAX_NOTE)
+    op_id: Optional[str] = Field(**_OP)
 
 
 def _reachability() -> dict:
@@ -50,7 +59,7 @@ def _reachability() -> dict:
 
 
 def build_report(conn, report_id: str, reachable: Optional[dict] = None) -> Optional[dict]:
-    """Stored view + consistency block. Pass `reachable` when building many reports at once."""
+    """Stored view + receipts + consistency block. Pass `reachable` when building many reports at once."""
     view = store.get_view(conn, report_id)
     if view is None:
         return None
@@ -58,14 +67,14 @@ def build_report(conn, report_id: str, reachable: Optional[dict] = None) -> Opti
         "report_id": report_id,
         "state": view["state"],
         "live": view["live"],
-        "conflicts": view["conflicts"],
+        "conflicts": [receipts.receipt(conn, view, c) for c in view["conflicts"]],
         "incomplete": view["incomplete"],
         "consistency": _consistency(conn, report_id, _reachability() if reachable is None else reachable),
     }
 
 
 def _consistency(conn, report_id: str, reachable: dict) -> dict:
-    """Replication badge plus which peers hold the report (PDF 2 6.8).
+    """Replication badge plus which peers hold the report (PDF 6.8).
 
     A peer confirms a report when its last summary shows it holds every event of the report
     (peer_view[peer][origin] >= the highest seq of that origin among the report's events).
@@ -86,28 +95,41 @@ def _consistency(conn, report_id: str, reachable: dict) -> dict:
     }
 
 
-def _ok(ev: dict, status: int, replayed: bool = False):
-    """201/200 body: the report view and, since v1.1, the full signed event (the SDK carries it on failover)."""
+def respond(result: writes.WriteResult, status: int) -> JSONResponse:
+    """The 2xx body of every write: the view, the signed event, and (for a replay) the replay header."""
+    ev = result.event
     with store.read() as conn:
         report = build_report(conn, ev["report_id"])
-    return JSONResponse(
-        status_code=200 if replayed else status,
-        content={"report": report, "event_id": ev["event_id"], "event": ev, "consistency": report["consistency"]},
-        headers={"Idempotent-Replay": "true"} if replayed else None,
-    )
+    body = {"report": report, "event": ev, "event_id": ev["event_id"], "consistency": report["consistency"]}
+    if result.replay:
+        return JSONResponse(status_code=200, content=body, headers={"Idempotent-Replay": "true"})
+    return JSONResponse(status_code=status, content=body)
 
 
-def _op(body_op, idem_header) -> Optional[str]:
-    return body_op or idem_header
+def failure(exc: Exception) -> JSONResponse:
+    """409 / 404 answers shared by every write route."""
+    if isinstance(exc, writes.NotFound):
+        raise HTTPException(404, "unknown report")
+    if isinstance(exc, writes.StaleEdit):
+        return JSONResponse(status_code=409, content={"error": "stale_edit", "live": exc.live})
+    if isinstance(exc, writes.OpIdReuse):
+        return JSONResponse(status_code=409, content={"error": "op_id_reuse"})
+    if isinstance(exc, writes.ReportExists):
+        return JSONResponse(status_code=409, content={"error": "report_exists"})
+    if isinstance(exc, writes.NoConflict):
+        return JSONResponse(status_code=409, content={"error": "no_conflict"})
+    raise exc
+
+
+def _op(body_op: Optional[str], header_op: Optional[str]) -> Optional[str]:
+    return body_op or (header_op[: schemas.OP_ID_MAX] if header_op else None)
 
 
 @router.post("/reports", status_code=201)
 def create_report(body: CreateReport, auth=Depends(require("create")),
-                  idempotency_key: Optional[str] = Header(default=None)):
+                  idempotency_key: Optional[str] = Header(None)):
     if body.category not in schemas.CATEGORIES:
         raise HTTPException(422, f"category must be one of {schemas.CATEGORIES}")
-    if body.report_id is not None and not writes.CLIENT_REPORT_ID.match(body.report_id):
-        raise HTTPException(422, "report_id must look like R-<8 hex characters>")
     value = {
         "title": body.title, "category": body.category, "severity": body.severity,
         "status": "open", "assigned_team": None,
@@ -115,45 +137,37 @@ def create_report(body: CreateReport, auth=Depends(require("create")),
         "description": body.description or "", "people_estimate": body.people_estimate,
     }
     try:
-        ev, replayed = writes.local_write_ex(None, "CREATE", None, value, auth.actor,
-                                             op_id=_op(body.op_id, idempotency_key), new_report_id=body.report_id)
-    except writes.OpIdReuse:
-        return JSONResponse(status_code=409, content={"error": "op_id_reuse"})
-    except writes.ReportExists:
-        return JSONResponse(status_code=409, content={"error": "report_exists"})
-    return _ok(ev, 201, replayed)
+        result = writes.local_write(body.report_id, "CREATE", None, value, auth.actor,
+                                    op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode)
+    except (writes.OpIdReuse, writes.ReportExists) as exc:
+        return failure(exc)
+    return respond(result, 201)
 
 
 @router.patch("/reports/{report_id}")
 def patch_report(report_id: str, body: PatchReport, auth=Depends(require("set")),
-                 idempotency_key: Optional[str] = Header(default=None)):
+                 idempotency_key: Optional[str] = Header(None)):
     try:
         value = schemas.validate_field(body.field, body.value)
     except ValueError as e:
         raise HTTPException(422, str(e))
     try:
-        ev, replayed = writes.local_write_ex(report_id, "SET", body.field, value, auth.actor,
-                                             expected=body.expected, op_id=_op(body.op_id, idempotency_key))
-    except writes.NotFound:
-        raise HTTPException(404, "unknown report")
-    except writes.StaleEdit as e:
-        return JSONResponse(status_code=409, content={"error": "stale_edit", "live": e.live})
-    except writes.OpIdReuse:
-        return JSONResponse(status_code=409, content={"error": "op_id_reuse"})
-    return _ok(ev, 200, replayed)
+        result = writes.local_write(report_id, "SET", body.field, value, auth.actor, expected=body.expected,
+                                    op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode)
+    except (writes.NotFound, writes.StaleEdit, writes.OpIdReuse) as exc:
+        return failure(exc)
+    return respond(result, 200)
 
 
 @router.post("/reports/{report_id}/notes", status_code=201)
 def add_note(report_id: str, body: NoteBody, auth=Depends(require("note")),
-             idempotency_key: Optional[str] = Header(default=None)):
+             idempotency_key: Optional[str] = Header(None)):
     try:
-        ev, replayed = writes.local_write_ex(report_id, "NOTE", None, {"text": body.text}, auth.actor,
-                                             op_id=_op(body.op_id, idempotency_key))
-    except writes.NotFound:
-        raise HTTPException(404, "unknown report")
-    except writes.OpIdReuse:
-        return JSONResponse(status_code=409, content={"error": "op_id_reuse"})
-    return _ok(ev, 201, replayed)
+        result = writes.local_write(report_id, "NOTE", None, {"text": body.text}, auth.actor,
+                                    op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode)
+    except (writes.NotFound, writes.OpIdReuse) as exc:
+        return failure(exc)
+    return respond(result, 201)
 
 
 @router.get("/reports")
@@ -174,12 +188,22 @@ def get_report(report_id: str):
     return report
 
 
+def sig_status(ev: dict) -> str:
+    """verified | bad | unsigned. `bad` also covers an event whose body no longer matches its hash."""
+    if ev.get("sig") is None:
+        return "unsigned"
+    if canonical.event_hash(ev) != ev.get("hash"):
+        return "bad"
+    return "verified" if signing.verify(ev.get("origin"), ev["hash"], ev["sig"]) else "bad"
+
+
 @router.get("/reports/{report_id}/history")
 def report_history(report_id: str):
-    """Audit trail: every event of the report (any origin) in tie-break (HLC) order, exactly as
-    stored and replicated, so `supersedes`, `actor`, `hash` and `sig` are visible."""
+    """Audit trail: every event of the report (any origin) in tie-break (HLC) order, exactly as stored and
+    replicated, each with sig_status and whether it reached this node through POST /v1/carry."""
     with store.read() as conn:
-        events = store.events_for(conn, report_id)
+        events = sorted(store.events_for(conn, report_id), key=order)
+        carried = store.carried_ids(conn, [e["event_id"] for e in events])
     if not events:
         raise HTTPException(404, "unknown report")
-    return sorted(events, key=order)
+    return [{**e, "sig_status": sig_status(e), "carried": e["event_id"] in carried} for e in events]

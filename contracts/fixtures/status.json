@@ -14,7 +14,11 @@
       "link": "down",
       "reachable": false,
       "last_ok_s": 47.2,
+      "last_ok_ms": 47200,
       "their_heads": {
+        "pun": 2
+      },
+      "acked": {
         "pun": 2
       },
       "last_error": "link_down",
@@ -35,8 +39,8 @@
     "P2": 1
   },
   "carry": {
-    "received": 0,
-    "new": 0,
+    "received": 3,
+    "new": 3,
     "dup": 0,
     "rejected": 0
   }

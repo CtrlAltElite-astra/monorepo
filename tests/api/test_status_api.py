@@ -7,7 +7,7 @@ from pathlib import Path
 from contracts.schemas import LEVELS
 from region import config, store
 from region.engine import digest
-from region.sync import ingest
+from region.sync import ingest, state
 
 from conftest import KEY, create_value
 
@@ -56,10 +56,39 @@ def test_digests_are_the_engine_digests_and_stable(create, client):
     assert changed["event_digest"] != first["event_digest"] and changed["state_hash"] != first["state_hash"]
 
 
-def test_risk_and_queues_are_present_and_null_until_other_lanes_fill_them(client):
+def test_queues_stay_null_until_the_sync_lane_supplies_them_and_carry_counts_are_present(client):
     s = status(client)
-    assert "risk" in s and s["risk"] is None
     assert "queues" in s and s["queues"] is None
+    assert set(s["carry"]) == {"received", "new", "dup", "rejected"}  # this node's carry counters since it started
+
+
+def test_peers_carry_the_v11_keys(client):
+    p = status(client)["peers"]["pun"]
+    assert p["acked"] == p["their_heads"] == {}  # nothing acknowledged yet
+    assert p["last_ok_ms"] is None and p["reachable"] is False
+
+
+def test_data_at_risk_counts_events_no_peer_has_acknowledged(create, client, headers):
+    assert status(client)["risk"] == {"unreplicated": 0, "critical_unreplicated": 0, "oldest_age_ms": 0}
+    create(category="cart", severity=1)                                  # P1
+    create(category="cart", severity=5)                                  # P0 (severity >= 4)
+    client.post("/v1/reports/R-mum-1/notes", json={"text": "x"}, headers=headers)  # P2 bulk
+    risk = status(client)["risk"]
+    assert (risk["unreplicated"], risk["critical_unreplicated"]) == (3, 1)
+    assert risk["oldest_age_ms"] >= 0
+    state.save_peer_view("pun", {"mum": 2})                              # pun acknowledges mum:1 and mum:2
+    assert status(client)["risk"]["unreplicated"] == 1                   # only mum:3 is still only here
+    state.save_peer_view("pun", {"mum": 3})
+    assert status(client)["risk"] == {"unreplicated": 0, "critical_unreplicated": 0, "oldest_age_ms": 0}
+
+
+def test_risk_uses_the_most_advanced_peer_and_survives_a_dead_one(create, client, monkeypatch):
+    monkeypatch.setattr(config, "settings", dataclasses.replace(
+        config.settings, peers={"pun": "http://127.0.0.1:9", "del": "http://127.0.0.1:9"}))
+    create(category="cart", severity=1)
+    create(category="cart", severity=1)
+    state.save_peer_view("del", {"mum": 2})   # del holds both; pun (silent) holds none
+    assert status(client)["risk"]["unreplicated"] == 0  # one surviving copy is enough to not be "at risk"
 
 
 def test_never_contacted_peer_counts_as_unreachable(client):

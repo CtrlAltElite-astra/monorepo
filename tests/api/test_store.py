@@ -38,7 +38,7 @@ def test_a_database_cannot_be_reused_by_another_region(region, monkeypatch):
 
 def test_sequence_is_gap_free_and_clock_monotonic_under_concurrent_writers(region):
     def one(i):
-        return writes.local_write(None, "CREATE", None, create_value(f"r{i}"), "officer-mum-1")["seq"]
+        return writes.local_write(None, "CREATE", None, create_value(f"r{i}"), "officer-mum-1").event["seq"]
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         seqs = list(pool.map(one, range(100)))

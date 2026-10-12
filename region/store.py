@@ -16,7 +16,32 @@ from region.engine import canonical, derive as derive_mod, hlc
 
 _lock = threading.RLock()
 _conn: sqlite3.Connection | None = None
-MIGRATION = Path(__file__).parent / "migrations" / "001_init.sql"
+MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+MIGRATION = MIGRATIONS_DIR / "001_init.sql"  # idempotent; also sets the per-connection PRAGMAs
+
+
+def _ensure_op_id_column(conn: sqlite3.Connection) -> None:
+    """Contract v1.1: events.op_id. SQLite has no ADD COLUMN IF NOT EXISTS, so it is guarded here; this also keeps a
+    database that an earlier build already upgraded working (the column exists, the migration row does not)."""
+    if "op_id" not in {r[1] for r in conn.execute("PRAGMA table_info(events)")}:
+        conn.execute("ALTER TABLE events ADD COLUMN op_id TEXT")
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """001 is idempotent and runs every start (it carries the PRAGMAs). Every later file runs
+    exactly once, inside one transaction together with its schema_migrations row, so a crash
+    can never leave a half-applied ALTER TABLE behind."""
+    conn.executescript(MIGRATION.read_text(encoding="utf-8"))
+    _ensure_op_id_column(conn)
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at REAL NOT NULL)")
+    done = {r[0] for r in conn.execute("SELECT name FROM schema_migrations")}
+    for path in sorted(MIGRATIONS_DIR.glob("[0-9][0-9][0-9]_*.sql")):
+        if path == MIGRATION or path.name in done:
+            continue
+        conn.executescript(
+            "BEGIN IMMEDIATE;\n" + path.read_text(encoding="utf-8")
+            + f"\nINSERT INTO schema_migrations (name, applied_at) VALUES ('{path.name}', strftime('%s','now'));\nCOMMIT;"
+        )
 
 
 def init(db_path: str | None = None) -> None:
@@ -28,21 +53,12 @@ def init(db_path: str | None = None) -> None:
         _conn.close()
     _conn = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
     _conn.row_factory = sqlite3.Row
-    _conn.executescript(MIGRATION.read_text(encoding="utf-8"))
-    _migrate_v11(_conn)
+    _migrate(_conn)
     _conn.execute("INSERT OR IGNORE INTO node_meta (k, v) VALUES ('region', ?)", (config.settings.region,))
     stored = _conn.execute("SELECT v FROM node_meta WHERE k='region'").fetchone()[0]
     if stored != config.settings.region:
         raise RuntimeError(f"{path} belongs to region '{stored}', not '{config.settings.region}'")
     rebuild_stale_views()
-
-
-def _migrate_v11(conn) -> None:
-    """Contract v1.1 (additive): events.op_id + index. Idempotent, safe on every start."""
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(events)")}
-    if "op_id" not in cols:
-        conn.execute("ALTER TABLE events ADD COLUMN op_id TEXT")
-    conn.execute("CREATE INDEX IF NOT EXISTS ix_events_op ON events (op_id)")
 
 
 def rebuild_stale_views() -> int:
@@ -159,23 +175,6 @@ def insert_event_if_absent(conn, ev: dict) -> str:
     return "new"
 
 
-def event_by_op(conn, op_id: str):
-    """The event that carries this client operation id (own write, replicated or carried), or None."""
-    row = conn.execute("SELECT body FROM events WHERE op_id=? ORDER BY received_at, seq LIMIT 1", (op_id,)).fetchone()
-    return json.loads(row[0]) if row else None
-
-
-def op_get(conn, op_id: str):
-    """{req_hash, event_id} recorded when this node first served the operation, or None."""
-    row = conn.execute("SELECT req_hash, response FROM idempotency WHERE key=?", (op_id,)).fetchone()
-    return {"req_hash": row[0], "event_id": row[1]} if row else None
-
-
-def op_put(conn, op_id: str, req_hash: str, event_id: str) -> None:
-    conn.execute("INSERT OR IGNORE INTO idempotency (key, req_hash, response, at) VALUES (?,?,?,?)",
-                 (op_id, req_hash, event_id, time.time()))
-
-
 def event_by_id(conn, event_id: str):
     row = conn.execute("SELECT body FROM events WHERE event_id=?", (event_id,)).fetchone()
     return json.loads(row[0]) if row else None
@@ -194,6 +193,32 @@ def missing_ids(conn, ids: list) -> list:
 def events_for(conn, report_id: str) -> list:
     rows = conn.execute("SELECT body FROM events WHERE report_id=?", (report_id,)).fetchall()
     return [json.loads(r[0]) for r in rows]
+
+
+def event_by_op(conn, op_id: str):
+    """The first event (lowest HLC order) that carries this client op_id, or None.
+
+    It may have been written here, or have arrived by replication or carry."""
+    rows = conn.execute("SELECT body FROM events WHERE op_id=? ORDER BY hlc_l, hlc_c, origin, seq LIMIT 1", (op_id,)).fetchall()
+    return json.loads(rows[0][0]) if rows else None
+
+
+def mark_carried(conn, event_ids) -> None:
+    """Remember that these events reached this node through POST /v1/carry (history shows it)."""
+    now = time.time()
+    conn.executemany("INSERT OR IGNORE INTO carried_events (event_id, at) VALUES (?, ?)", [(i, now) for i in event_ids])
+
+
+def carried_ids(conn, event_ids) -> set:
+    ids = list(event_ids)
+    if not ids:
+        return set()
+    marks = ",".join("?" for _ in ids)
+    return {r[0] for r in conn.execute(f"SELECT event_id FROM carried_events WHERE event_id IN ({marks})", ids)}
+
+
+def carried_count(conn) -> int:
+    return conn.execute("SELECT COUNT(*) FROM carried_events").fetchone()[0]
 
 
 def events_after(conn, origin: str, after: int, limit: int) -> list:

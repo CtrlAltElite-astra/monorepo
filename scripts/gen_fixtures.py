@@ -32,12 +32,12 @@ report = {"report_id": "R-mum-1", "state": v["state"], "live": v["live"], "confl
 (out / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 status = {"region": "mum", "schema_version": 1, "policy_version": 1, "heads": {"mum": 2, "pun": 0},
           "event_count": 2, "event_digest": "sha256-hex", "state_hash": "sha256-hex",
-          "peers": {"pun": {"link": "down", "reachable": False, "last_ok_s": 47.2, "their_heads": {"pun": 2},
-                            "last_error": "link_down", "fails": 5}},
+          "peers": {"pun": {"link": "down", "reachable": False, "last_ok_s": 47.2, "last_ok_ms": 47200,
+                            "their_heads": {"pun": 2}, "acked": {"pun": 2}, "last_error": "link_down", "fails": 5}},
           "level": "ISOLATED", "quarantined": 0, "incomplete_reports": 0,
-          # nullable in the live API until Lane B (risk) / Lane D (queues) fill them; sample values for the UI
+          # v1.1: risk is computed by the region; queues and carry are null until the sync lane supplies them
           "risk": {"unreplicated": 3, "critical_unreplicated": 1, "oldest_age_ms": 47200},
           "queues": {"P0": 0, "P1": 2, "P2": 1},
-          "carry": {"received": 0, "new": 0, "dup": 0, "rejected": 0}}
+          "carry": {"received": 3, "new": 3, "dup": 0, "rejected": 0}}
 (out / "status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
 print("fixtures written")

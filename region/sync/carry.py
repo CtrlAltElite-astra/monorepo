@@ -116,6 +116,8 @@ async def carry(request: Request, auth=Depends(require_key)):
                             "reason": (stats["rejected_list"] or [{}])[0].get("reason", "rejected")})
         elif stats["new"]:
             _stats["new"] += 1
+            with store.tx() as conn:  # remembered so GET /v1/reports/{id}/history can show "carried by a browser"
+                store.mark_carried(conn, [ev["event_id"]])
             results.append({"event_id": ev["event_id"], "result": "new"})
         else:
             _stats["dup"] += 1
