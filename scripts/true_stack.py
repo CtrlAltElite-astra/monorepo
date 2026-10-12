@@ -6,6 +6,7 @@
     python scripts/true_stack.py env mum                         # env block a region needs for AUTH_ENABLED
     python scripts/true_stack.py members                         # demo members (name, role, actor id)
     python scripts/true_stack.py revoke Bob --reason "left team" # revoke a member; regions refuse them in seconds
+    python scripts/true_stack.py relay [--port 4090]             # loopback revoke endpoint for the console's demo button
 
 Nothing here is needed unless AUTH_ENABLED=true. Defaults keep the existing ports: issuer 4001, sidecars
 4101 / 4102 / 4103 (mum / pun / del). Tests pass their own base ports and data dir to stay isolated from a
@@ -30,10 +31,15 @@ ROOT = Path(__file__).resolve().parent.parent
 TRUE_DIR = ROOT / "collaboration" / "true"
 DEFAULT_REGIONS = ["mum", "pun", "del"]
 
-DEMO_MEMBERS = [   # synthetic; never real people
-    ("Alice", "officer"), ("Bob", "officer"), ("Chitra", "officer"), ("Dev", "officer"), ("Esha", "officer"),
-    ("Sunita (supervisor)", "supervisor"), ("Admin Judge", "admin"),
+DEMO_MEMBERS = [   # synthetic; never real people. Attributes (contract v1.2): who can prove "over 18" / "member"
+    ("Alice", "officer", {"age_over_18": True, "member": True}),
+    ("Bob", "officer", {"age_over_18": True, "member": False}),
+    ("Chitra", "officer", {"age_over_18": False, "member": True}),
+    ("Dev", "officer", {"age_over_18": True, "member": True}),
+    ("Esha", "officer", {"age_over_18": False, "member": False}),
+    ("Sunita (supervisor)", "supervisor", {}), ("Admin Judge", "admin", {}),
 ]
+RELAY_PORT = 4090
 
 
 class Stack:
@@ -172,14 +178,15 @@ class Stack:
         """Idempotent: members are created once (data/true/members.json); fresh one-time codes every call."""
         mf = self.data / "members.json"
         members = json.loads(mf.read_text()) if mf.exists() else {}
-        for name, role in DEMO_MEMBERS:
+        for name, role, attributes in DEMO_MEMBERS:
             if name not in members:
-                status, body = self.admin("POST", "/v1/syncshield/members", {"name": name, "role": role})
+                status, body = self.admin("POST", "/v1/syncshield/members",
+                                          {"name": name, "role": role, **({"attributes": attributes} if attributes else {})})
                 assert status == 201, body
                 members[name] = body
         mf.write_text(json.dumps(members, indent=2))
         codes = {}
-        for name, _ in DEMO_MEMBERS:
+        for name, _, _ in DEMO_MEMBERS:
             status, body = self.admin("POST", "/v1/syncshield/claim-codes",
                                       {"actorId": members[name]["actor_id"], "ttlMinutes": ttl_minutes})
             if status == 201:
@@ -187,9 +194,86 @@ class Stack:
         return members, codes
 
 
+    def members(self):
+        mf = self.data / "members.json"
+        return json.loads(mf.read_text()) if mf.exists() else {}
+
+    def find_member(self, who):
+        """A demo member by name, first name or actor id; an unlisted `act_...` id is passed through as is."""
+        w = str(who).strip().lower()
+        hits = [m for n, m in self.members().items() if w in (n.lower(), n.split(" ")[0].lower(), m["actor_id"].lower())]
+        if len(hits) == 1:
+            return hits[0]["actor_id"]
+        return who if not hits and str(who).startswith("act_") else None
+
+    def revoke(self, who, reason):
+        actor = self.find_member(who)
+        if actor is None:
+            return 404, {"error": {"code": "unknown_member", "message": f"no single member matches {who!r}"}}
+        return self.admin("POST", f"/v1/syncshield/members/{actor}/revoke", {"reason": reason})
+
+
+def serve_relay(stack, port=RELAY_PORT):
+    """Demo-only revoke endpoint on 127.0.0.1, so the console's "Revoke this shopper" button never holds the issuer
+    admin token. Same guard as the chaos agent: header X-Admin-Key = ADMIN_KEY (default "dev-admin"), and CORS only
+    for the console origins in CORS_ORIGINS (default the frontend-new dev server).
+
+        POST /revoke {"member": "<name | actor id>", "reason": "..."} -> the issuer's answer
+    """
+    import hmac
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    admin_key = os.environ.get("ADMIN_KEY", "dev-admin")
+    origins = {o.strip() for o in os.environ.get(
+        "CORS_ORIGINS", "http://localhost:5175,http://127.0.0.1:5175").split(",") if o.strip()}
+
+    class Relay(BaseHTTPRequestHandler):
+        def _send(self, code, body=None):
+            self.send_response(code)
+            origin = self.headers.get("Origin")
+            if origin in origins:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Admin-Key")
+                self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+                self.send_header("Vary", "Origin")
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if body is not None:
+                self.wfile.write(json.dumps(body).encode())
+
+        def do_OPTIONS(self):  # noqa: N802 - http.server naming
+            self._send(204)
+
+        def do_POST(self):  # noqa: N802
+            if self.path != "/revoke":
+                return self._send(404, {"error": {"code": "not_found", "message": "POST /revoke only"}})
+            if not hmac.compare_digest(self.headers.get("X-Admin-Key", ""), admin_key):
+                return self._send(401, {"error": {"code": "unauthorized", "message": "missing or wrong X-Admin-Key"}})
+            try:
+                body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 4096)) or b"{}")
+                member, reason = str(body["member"]), str(body.get("reason") or "revoked in the demo")[:200]
+            except (ValueError, KeyError, TypeError):
+                return self._send(400, {"error": {"code": "bad_request", "message": "member is required"}})
+            status, out = stack.revoke(member, reason)
+            self._send(status, out)
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", port), Relay)
+    print(f"revoke relay on http://127.0.0.1:{port}  (X-Admin-Key required; Ctrl+C to stop)")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("cmd", choices=["up", "down", "provision", "env", "reset", "members", "revoke"])
+    ap.add_argument("cmd", choices=["up", "down", "provision", "env", "reset", "members", "revoke", "relay"])
     ap.add_argument("region", nargs="?", help="region for `env`; member name or actor id for `revoke`")
     ap.add_argument("--reason", default="revoked by admin")
     ap.add_argument("--regions", default=",".join(DEFAULT_REGIONS))
@@ -197,6 +281,7 @@ def main(argv=None):
     ap.add_argument("--data-dir")
     ap.add_argument("--issuer-port", type=int, default=4001)
     ap.add_argument("--sidecar-base-port", type=int, default=4101)
+    ap.add_argument("--port", type=int, default=RELAY_PORT, help="port for `relay`")
     a = ap.parse_args(argv)
     st = Stack(a.data_dir, a.regions.split(","), a.issuer_port, a.sidecar_base_port)
     if a.cmd == "up":
@@ -215,20 +300,18 @@ def main(argv=None):
     elif a.cmd == "env":
         for k, v in st.region_env(a.region or st.regions[0]).items():
             print(f"{k}={v}")
-    elif a.cmd in ("members", "revoke"):
-        mf = st.data / "members.json"
-        members = json.loads(mf.read_text()) if mf.exists() else {}
-        if a.cmd == "members":
-            for name, m in members.items():
-                print(f"{name:22} {m.get('role', '?'):11} {m['actor_id']}")
-            return
+    elif a.cmd == "members":
+        for name, m in st.members().items():
+            attrs = ", ".join(k for k, v in (m.get("attributes") or {}).items() if v) or "-"
+            print(f"{name:22} {m.get('role', '?'):11} {m['actor_id']}  proves: {attrs}")
+    elif a.cmd == "relay":
+        serve_relay(st, a.port)
+    elif a.cmd == "revoke":
         if not a.region:
             ap.error("revoke needs a member name or actor id, e.g.  revoke Bob")
-        who = a.region.lower()
-        hits = [m for n, m in members.items() if who in (n.lower(), n.split(" ")[0].lower(), m["actor_id"].lower())]
-        if len(hits) != 1:
+        if st.find_member(a.region) is None:
             sys.exit(f"no single member matches {a.region!r}; run `members` to list them")
-        status, body = st.admin("POST", f"/v1/syncshield/members/{hits[0]['actor_id']}/revoke", {"reason": a.reason})
+        status, body = st.revoke(a.region, a.reason)
         if status != 200:
             sys.exit(f"revoke failed: HTTP {status} {body}")
         print(f"revoked {a.region}: {body['revokedCredentials']} credential(s), status version {body['statusVersion']}")

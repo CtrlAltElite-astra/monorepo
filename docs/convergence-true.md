@@ -251,6 +251,44 @@ python scripts/demo_true.py            # about a minute; exit code = number of f
 python scripts/demo_true.py --pause    # step through with Enter when presenting
 ```
 
+## 11b. Proving one attribute (contract v1.2, lane C)
+
+A restricted product asks the shopper to prove ONE attribute ("over 18" or "member"). The credential carries two more
+signed, separately disclosable yes/no claims for this, `age_over_18` and `member`; the issuer copies them from its
+members table, like the role.
+
+| Step | What happens |
+|---|---|
+| Challenge | `POST /v1/auth/challenge {"claim": "age_over_18"}` (body optional). The sidecar stores the one attribute asked for with the challenge; `required_claims` is the four sign-in claims plus that one. |
+| Presentation | The wallet reveals exactly `required_claims`. An ordinary sign-in (no `claim`) reveals neither attribute. |
+| Verification | The sidecar accepts the four sign-in claims plus, optionally, exactly the stored attribute. Anything else (an attribute nobody asked for, two attributes) is `401 wrong_claims`. Withholding the asked attribute still signs in, without the claim. The value must be a boolean. |
+| Session | Two extra token claims: `dsc` (attribute names the shop received) and `clm` (those whose value was `true`). Nothing else from the credential is stored: no name, no date of birth. |
+| `GET /v1/auth/me` | gains `claims` (proven) and `disclosed` (received). |
+| Use | `region.trust.claims.has_claim(auth, "age_over_18")`; `require_claim(auth, claim)` raises `403 {"error":"claim_required","claim":...}` (rendered with exactly that top-level body). API-key mode never has a claim. |
+
+Because the proof lives in the session token, it is verified locally at every region like the role is: the same session
+and the same claim keep working at another region after a crash, with the issuer and the other sidecar down
+(`test_claims_real.py`, demo step 6c).
+
+`region/trust/claims.py` also answers the rate limiter and the engine:
+
+- `subject_key(auth)`: the credential id when signed in (the limit follows the person, not the device), else the
+  API-key actor.
+- `is_revoked(credential_id)`: reads the status snapshot the region already holds (re-verified with the pinned issuer
+  key on every call). Only an explicit revoked entry counts; no snapshot or an unknown id is "not revoked", so the
+  admission rule never rejects history it has no status for. Window: the sidecar's refresh interval
+  (`STATUS_REFRESH_MS`, 5 s by default) plus the fetch; about 1 s in the tests.
+- The id events carry as `event["credential_id"]` is the same id the status list is keyed by (asserted in
+  `test_is_revoked_turns_true_within_the_window_for_the_id_events_carry`), so lane B's `revoked_credential` rule can
+  match it.
+
+Demo members have attributes so every outcome can be shown: Alice and Dev prove both, Bob is not a member, Chitra
+is under 18, Esha neither (`python scripts/true_stack.py members`).
+
+For the console's "Revoke this shopper" button, `python scripts/true_stack.py relay` serves `POST /revoke` on
+`127.0.0.1:4090`. The browser sends the console admin key (`X-Admin-Key`, the chaos agent's key); only the relay holds
+the issuer admin token.
+
 ## 12. Changed files
 
 | Area | Files |
@@ -261,6 +299,7 @@ python scripts/demo_true.py --pause    # step through with Enter when presenting
 | Routes | `region/api/routes_auth.py` (new), `routes_reports.py`, `routes_review.py`, `writes.py`, `region/sync/routes_admin.py` |
 | Tooling | `scripts/true_stack.py`, `scripts/demo_true.py`, `scripts/run_one.py`, `requirements-auth.txt`, `.env.example` |
 | Dashboard | `dashboard/src/auth/*` (wallet, context, panel, stub), `api.js`, `main.jsx`, `ShopConsole.jsx`, `sdk/syncshieldClient.js`, `vite.config.js` |
+| Contract v1.2 (lane C) | `region/trust/claims.py` (new), `region/trust/{true_session,true_adapter,adapter,true_hook}.py`, `region/auth.py`, `region/api/routes_auth.py`, `collaboration/true/{packages/shared,services/issuer-api,services/syncshield-auth}`, `wallet-cli.mjs`, `scripts/{true_stack,demo_true}.py`, `frontend-new/src/identity/*` |
 | Tests | `tests/convergence/*`, `collaboration/true/tests/syncshield.test.ts` |
 
 Files owned by other lanes that were touched (need the owner's review): `region/auth.py`, `region/config.py`,
@@ -288,6 +327,13 @@ Each change is additive and gated by `AUTH_ENABLED`; with it off these files beh
   push/ingest path does not have the same guard. Nothing in the tests exploits this; it belongs to the sync owners.
 - **Peer replication is still authenticated by a shared peer token**, not by TRUE.
 - **Demo identities are synthetic.** Claim codes work once.
+- **An attribute is a fact the issuer asserted, not a check of the person.** "Over 18" is as good as the issuer's
+  members table; the shop learns the boolean and nothing behind it. One attribute per sign-in: a purchase needing
+  both signs in twice.
+- **The proven claim lasts as long as the session** (5 minutes), and an attribute changed or revoked at the issuer
+  reaches a region only through a revocation (status list) or the next sign-in.
+- **`has_claim` is a session fact, not a per-request check against the issuer.** That is what lets it work with the
+  issuer down.
 - **Dashboard auth-mode build** needs `npm install` in `collaboration/true`. The normal build does not.
 
 ## 14. Adaptation changelog
@@ -306,5 +352,7 @@ SyncShield side, after merging `main` (Lane A's write path v2):
 - `Auth` keeps Lane A's field order `(actor, role, mode)` and appends `credential_id`.
 - Provenance is added to the event before hashing and signing; an op_id is bound to the actor.
 - Ownership filters on reports, history and the review queue; the review/resolve endpoints are Lane A's.
+- Contract v1.2: `Auth` gains `claims` (proven attributes) after `credential_id`; `AuthDecision` and `Session`
+  gain `claims` / `disclosed`, all defaulting to empty, so API-key mode is unchanged.
 - `Authorization` added to the allowed CORS headers; Lane A's origin allowlist is unchanged
   (`CORS_ORIGINS` for other dashboard ports).

@@ -34,6 +34,7 @@ class AuthDecision:
     mode: Mode = "online"                 # how fresh the trust data behind this decision is
     status_ver: Optional[Union[int, str]] = None  # version of the revocation/status list used, if any
     reason: str = ""                      # "" when allowed, else UNKNOWN_CREDENTIAL / FORBIDDEN / ...
+    claims: tuple = ()                    # attributes proven in a verified TRUE session; () for API keys
 
 
 @dataclass(frozen=True)

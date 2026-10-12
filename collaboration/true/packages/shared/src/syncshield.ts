@@ -7,6 +7,12 @@ export const SYNCSHIELD_CREDENTIAL_TYPE = 'SyncShieldMember';
 // Exactly these claims are signed, selectively disclosed, and requested at login. Nothing personal.
 export const SYNCSHIELD_CLAIMS = ['actor_id', 'syncshield_member', 'syncshield_role', 'credential_id'] as const;
 export const SYNCSHIELD_ROLES = ['officer', 'supervisor', 'admin'] as const;
+
+// Contract v1.2 (C1): two more signed, selectively disclosable attributes (booleans). Never disclosed at an ordinary
+// sign-in; a challenge may ask for AT MOST ONE of them (a restricted product), and the regional session records only
+// which ones were proven. Mirrored by ATTRIBUTES in region/trust/true_session.py and CLAIMS in region/trust/claims.py.
+export const SYNCSHIELD_ATTRIBUTES = ['age_over_18', 'member'] as const;
+export type SyncShieldAttribute = (typeof SYNCSHIELD_ATTRIBUTES)[number];
 export type SyncShieldRole = (typeof SYNCSHIELD_ROLES)[number];
 
 // Token contract between the regional sidecar (issues) and every FastAPI region (verifies locally).

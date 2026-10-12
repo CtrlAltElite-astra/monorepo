@@ -5,13 +5,15 @@ verification and returns a short-lived regional session token. FastAPI only rela
 crypto of its own, and the browser never talks to the sidecar directly.
 
     POST /v1/auth/challenge   one-time nonce + audience chosen HERE, and the claims to disclose
+                              optional body {"claim": "age_over_18" | "member"}: also ask for that ONE attribute
     POST /v1/auth/session     {challenge_id, presentation} -> {token, expires_at, role, auth_mode, ...}
     GET  /v1/auth/me          identity DERIVED from the verified session and current local status (never echoed)
+                              claims: attributes proven at sign-in; disclosed: attribute names the shop received
     POST /v1/auth/logout      stateless: tells the client to drop its token (see docs: no instant revocation)
     GET  /v1/auth/status      public, no personal data: is login available here, and how fresh is the status?
 """
 import time
-from typing import Optional
+from typing import Literal, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, Header
@@ -45,10 +47,15 @@ async def _sidecar(method: str, path: str, json: Optional[dict] = None):
         return 503, {"error": {"code": "auth_unavailable", "message": "This region's auth sidecar is not reachable"}}
 
 
+class ChallengeBody(BaseModel):
+    claim: Optional[Literal["age_over_18", "member"]] = None   # at most one attribute per sign-in
+
+
 @router.post("/challenge")
-async def challenge():
-    status, body = await _sidecar("POST", "/internal/v1/challenge", {})
-    return JSONResponse(status_code=status, content=body, headers=NO_STORE)
+async def challenge(body: Optional[ChallengeBody] = None):
+    status, out = await _sidecar("POST", "/internal/v1/challenge",
+                                 {"claim": body.claim} if body is not None and body.claim else {})
+    return JSONResponse(status_code=status, content=out, headers=NO_STORE)
 
 
 class SessionBody(BaseModel):
@@ -79,6 +86,8 @@ def me(auth: Auth = Depends(require_key), authorization: str = Header(None)):
         "status_age_s": status.age if status else None,
         "session_expires_at": sess.exp if sess else None,
         "region": config.settings.region,
+        "claims": list(auth.claims),
+        "disclosed": list(sess.disclosed) if sess else [],
     }, headers=NO_STORE)
 
 

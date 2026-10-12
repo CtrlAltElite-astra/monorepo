@@ -5,6 +5,8 @@
 //   * credentials  : an issuer-side record per issued SyncShield credential (id, status, expiry)
 //   * claim codes  : admin-provisioned, one-time, bound to ONE member (no public "give me a code for id N")
 //   * revocation   : an admin action, published as an issuer-signed status snapshot
+//   * attributes   : contract v1.2 (C1): age_over_18 and member, two booleans the issuer records per member and
+//                    signs as separately disclosable claims (a shop asks for one; nothing else is revealed)
 //
 // The issuer database is the membership authority. The browser can never choose a role: the role claim is
 // copied from the members table at issuance time.
@@ -13,7 +15,10 @@ import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { SignJWT, importJWK } from 'jose';
-import { ISSUER_ID, SYNCSHIELD_CREDENTIAL_TYPE, SYNCSHIELD_CLAIMS, SYNCSHIELD_ROLES, STATUS_TOKEN_TYPE, STATUS_POLICY, URLS, type SyncShieldRole } from '@true/shared';
+import {
+  ISSUER_ID, SYNCSHIELD_ATTRIBUTES, SYNCSHIELD_CREDENTIAL_TYPE, SYNCSHIELD_CLAIMS, SYNCSHIELD_ROLES, STATUS_TOKEN_TYPE, STATUS_POLICY, URLS,
+  type SyncShieldRole,
+} from '@true/shared';
 import { issueCredential, randomClaimCode, randomToken, type Jwk } from '@true/credentials';
 
 export type IssuerKeys = { publicJwk: Jwk; privateJwk: Jwk };
@@ -52,6 +57,10 @@ export function migrateSyncShield(db: DatabaseSync): void {
   if (!cols.some((c) => c.name === 'profile')) {
     db.exec("ALTER TABLE claim_codes ADD COLUMN profile TEXT NOT NULL DEFAULT 'student'");
   }
+  const memberCols = db.prepare('PRAGMA table_info(syncshield_members)').all() as { name: string }[];
+  for (const attr of SYNCSHIELD_ATTRIBUTES) {
+    if (!memberCols.some((c) => c.name === attr)) db.exec(`ALTER TABLE syncshield_members ADD COLUMN ${attr} INTEGER NOT NULL DEFAULT 1`);
+  }
 }
 
 // ---------- status generation (monotonic: a rollback is detectable) ----------
@@ -69,7 +78,14 @@ function bumpGeneration(db: DatabaseSync): number {
 
 // ---------- members ----------
 
-export type Member = { actor_id: string; role: SyncShieldRole; student_id: number; name: string; status: string };
+export type Attributes = { age_over_18: boolean; member: boolean };
+export type Member = { actor_id: string; role: SyncShieldRole; student_id: number; name: string; status: string; attributes: Attributes };
+
+type MemberRow = Omit<Member, 'attributes'> & { age_over_18: number; member: number };
+const toMember = ({ age_over_18, member, ...rest }: MemberRow): Member =>
+  ({ ...rest, attributes: { age_over_18: age_over_18 === 1, member: member === 1 } });
+const MEMBER_SELECT = `SELECT m.actor_id, m.role, m.student_id, s.name, s.status, m.age_over_18, m.member FROM syncshield_members m
+       JOIN students s ON s.id = m.student_id`;
 
 const newActorId = () => 'act_' + randomBytes(8).toString('hex');
 const newCredentialId = () => 'cred_' + randomBytes(12).toString('hex');
@@ -77,16 +93,15 @@ const newCredentialId = () => 'cred_' + randomBytes(12).toString('hex');
 // A synthetic demo person (never real data). Idempotent when `actorId` already exists.
 export function provisionMember(
   db: DatabaseSync,
-  input: { name: string; role: SyncShieldRole; actorId?: string },
+  input: { name: string; role: SyncShieldRole; actorId?: string; attributes?: Partial<Attributes> },
   now: Clock = () => new Date(),
 ): Member {
   if (!(SYNCSHIELD_ROLES as readonly string[]).includes(input.role)) throw new Error(`unknown role ${input.role}`);
   if (input.actorId) {
-    const existing = db.prepare(
-      `SELECT m.actor_id, m.role, m.student_id, s.name, s.status FROM syncshield_members m
-       JOIN students s ON s.id = m.student_id WHERE m.actor_id = ?`).get(input.actorId) as Member | undefined;
-    if (existing) return existing;
+    const existing = db.prepare(`${MEMBER_SELECT} WHERE m.actor_id = ?`).get(input.actorId) as MemberRow | undefined;
+    if (existing) return toMember(existing);
   }
+  const attributes: Attributes = { age_over_18: input.attributes?.age_over_18 ?? true, member: input.attributes?.member ?? true };
   const actorId = input.actorId ?? newActorId();
   const stamp = now().toISOString();
   db.exec('BEGIN IMMEDIATE');
@@ -96,10 +111,10 @@ export function provisionMember(
        VALUES (?, ?, '2000-01-01', 'synthetic demo member', 'SyncShield', '-', 'SyncShield', '', ?)`,
     ).run(input.name, 'SS-' + actorId, stamp);
     const studentId = Number(result.lastInsertRowid);
-    db.prepare('INSERT INTO syncshield_members (student_id, actor_id, role, created_at) VALUES (?, ?, ?, ?)')
-      .run(studentId, actorId, input.role, stamp);
+    db.prepare('INSERT INTO syncshield_members (student_id, actor_id, role, created_at, age_over_18, member) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(studentId, actorId, input.role, stamp, attributes.age_over_18 ? 1 : 0, attributes.member ? 1 : 0);
     db.exec('COMMIT');
-    return { actor_id: actorId, role: input.role, student_id: studentId, name: input.name, status: 'active' };
+    return { actor_id: actorId, role: input.role, student_id: studentId, name: input.name, status: 'active', attributes };
   } catch (error) {
     db.exec('ROLLBACK');
     throw error;
@@ -107,9 +122,7 @@ export function provisionMember(
 }
 
 export function listMembers(db: DatabaseSync): Member[] {
-  return db.prepare(
-    `SELECT m.actor_id, m.role, m.student_id, s.name, s.status FROM syncshield_members m
-     JOIN students s ON s.id = m.student_id ORDER BY m.student_id`).all() as Member[];
+  return (db.prepare(`${MEMBER_SELECT} ORDER BY m.student_id`).all() as MemberRow[]).map(toMember);
 }
 
 // ---------- claim codes ----------
@@ -140,8 +153,8 @@ export function createSyncShieldClaimCode(
 export async function issueSyncShieldCredential(
   db: DatabaseSync, keys: IssuerKeys, studentId: number, holderPublicJwk: Jwk, now: Clock = () => new Date(),
 ): Promise<{ credential: string; credentialId: string; role: SyncShieldRole; actorId: string; expiresAt: string }> {
-  const member = db.prepare('SELECT actor_id, role FROM syncshield_members WHERE student_id = ?')
-    .get(studentId) as { actor_id: string; role: SyncShieldRole } | undefined;
+  const member = db.prepare('SELECT actor_id, role, age_over_18, member FROM syncshield_members WHERE student_id = ?')
+    .get(studentId) as { actor_id: string; role: SyncShieldRole; age_over_18: number; member: number } | undefined;
   if (!member) throw new Error('not_a_member');
   const credentialId = newCredentialId();
   const issued = now();
@@ -157,6 +170,9 @@ export async function issueSyncShieldCredential(
       syncshield_member: true,
       syncshield_role: member.role, // computed here, from the members table, never from the caller
       credential_id: credentialId,
+      // yes/no facts from the members table: a shop learns "over 18", never the date of birth behind it
+      age_over_18: member.age_over_18 === 1,
+      member: member.member === 1,
     },
   });
   db.prepare(
@@ -228,7 +244,10 @@ export function registerSyncShieldRoutes(app: Hono, db: DatabaseSync, keys: Issu
 
   // Public: what a wallet needs to know to claim and to log in.
   app.get('/v1/syncshield/profile', (c) =>
-    c.json({ issuerId: ISSUER_ID, credentialType: SYNCSHIELD_CREDENTIAL_TYPE, claims: SYNCSHIELD_CLAIMS, roles: SYNCSHIELD_ROLES, wallet: URLS.wallet }));
+    c.json({
+      issuerId: ISSUER_ID, credentialType: SYNCSHIELD_CREDENTIAL_TYPE, claims: SYNCSHIELD_CLAIMS, attributes: SYNCSHIELD_ATTRIBUTES,
+      roles: SYNCSHIELD_ROLES, wallet: URLS.wallet,
+    }));
 
   // Public: the issuer-signed status snapshot every region caches and verifies with the pinned issuer key.
   app.get('/v1/syncshield/status-snapshot', async (c) => c.json(await signStatusSnapshot(db, keys, now)));
@@ -236,8 +255,10 @@ export function registerSyncShieldRoutes(app: Hono, db: DatabaseSync, keys: Issu
   app.get('/v1/syncshield/members', admin, (c) => c.json({ members: listMembers(db) }));
 
   app.post('/v1/syncshield/members', admin, async (c) => {
-    const body = z.object({ name: z.string().min(1).max(80), role: z.enum(SYNCSHIELD_ROLES) })
-      .safeParse(await c.req.json().catch(() => null));
+    const body = z.object({
+      name: z.string().min(1).max(80), role: z.enum(SYNCSHIELD_ROLES),
+      attributes: z.object({ age_over_18: z.boolean().optional(), member: z.boolean().optional() }).strict().optional(),
+    }).safeParse(await c.req.json().catch(() => null));
     if (!body.success) return c.json(refuse('bad_request', 'name and role (officer|supervisor|admin) are required'), 400);
     return c.json(provisionMember(db, body.data, now), 201);
   });
