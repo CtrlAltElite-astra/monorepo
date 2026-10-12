@@ -208,6 +208,12 @@ def snapshot() -> dict:
         else:
             level = "HEALTHY"
 
+        # a node that is refusing writes (region limit or full write queue) says so, unless it is cut off
+        if level != "ISOLATED":
+            from region.sync import scale
+            if scale.recently_overloaded():
+                level = "OVERLOADED"
+
         _current_level = level
         risk = compute_risk(conn)
 

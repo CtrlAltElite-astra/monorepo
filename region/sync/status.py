@@ -7,12 +7,13 @@ Produces /v1/status v1.1 payload conforming to PDF 2 Section 5.4, 6.8:
 - Data-at-risk meter (unreplicated, critical_unreplicated, oldest_age_ms)
 - Priority queue depth (P0, P1, P2)
 - Browser carry metrics
+- load and rate blocks (contract v1.2): writes per second, power, batch, queue depth, limits and refusals
 """
 from contracts.schemas import CONTRACT_VERSION
 from region import config, store
 from region.engine import digest
 from region.engine.derive import POLICY_VERSION
-from region.sync import state
+from region.sync import scale, state
 
 
 def build_status() -> dict:
@@ -42,4 +43,6 @@ def build_status() -> dict:
         "risk": snap["risk"],
         "queues": snap["queues"],
         "carry": snap.get("carry", {"received": 0, "new": 0, "dup": 0, "rejected": 0}),
+        "load": scale.load_block(),
+        "rate": scale.rate_block(),
     }

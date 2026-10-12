@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from region import config
 from region.auth import require_key
-from region.sync import links
+from region.sync import groupcommit, links
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -53,18 +53,34 @@ def set_link(peer: str, body: LinkBody, _=Depends(admin_guard)):
 
 @router.post("/config")
 def update_config(body: dict, _=Depends(admin_guard)):
-    """Dynamic configuration updates and PEERS hot reload (PDF 2 Section 6.8, 6.10)."""
+    """Runtime configuration: PEERS hot reload (join) and the scaling settings of contract v1.2.
+
+    Accepts add_peer / peers and any of rate_actor_burst, rate_actor_refill_per_s, region_write_limit_per_s,
+    power. Anything else is a 422, and nothing at all is applied when any value is invalid."""
+    known = set(config.RUNTIME_KEYS) | {"add_peer", "peers"}
+    unknown = sorted(set(body) - known)
+    if unknown:
+        raise HTTPException(422, f"unknown setting(s): {', '.join(unknown)}")
+    try:
+        changes = config.validate_runtime({k: v for k, v in body.items() if k in config.RUNTIME_KEYS})
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     if "add_peer" in body:
         p_info = body["add_peer"]
         config.add_peer(p_info["name"], p_info["url"])
     if "peers" in body:
         for p_name, p_url in body["peers"].items():
             config.add_peer(p_name, p_url)
+    if changes:
+        config.update_runtime(changes)
     return {
         "region": config.settings.region,
         "peers": config.settings.peers,
         "sync_interval_ms": config.settings.sync_interval_ms,
         "push_enabled": config.settings.push_enabled,
+        **config.runtime_values(),
+        "batch": config.POWER_BATCH[config.settings.power],
+        "group_commit": {"installed": groupcommit.installed(), **groupcommit.stats()},
     }
 
 
