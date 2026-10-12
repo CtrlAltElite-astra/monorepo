@@ -15,6 +15,7 @@ from region import config, store
 from region.api import routes_reports, routes_review, routes_status, writes
 from region.engine import signing
 from region.sync import carry, client, routes_admin, routes_sync
+from region.trust import true_hook
 
 DEFAULT_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:4173", "http://127.0.0.1:4173")
 
@@ -54,7 +55,7 @@ async def limit_body(request: Request, call_next):
 
 app.add_middleware(  # added last = outermost, so even the 422 above carries CORS headers
     CORSMiddleware, allow_origins=cors_origins(), allow_methods=["*"],
-    allow_headers=["X-Api-Key", "Content-Type", "Idempotency-Key", "X-Admin-Key"],
+    allow_headers=["X-Api-Key", "Authorization", "Content-Type", "Idempotency-Key", "X-Admin-Key"],
     expose_headers=["Idempotent-Replay", "Retry-After"],
 )
 app.include_router(routes_reports.router)
@@ -63,3 +64,4 @@ app.include_router(routes_status.router)
 app.include_router(routes_sync.router)
 app.include_router(routes_admin.router)
 app.include_router(carry.router)
+true_hook.install(app)  # no-op unless AUTH_ENABLED=true (TRUE credential sessions)

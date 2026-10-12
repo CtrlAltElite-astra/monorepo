@@ -50,6 +50,13 @@ class Settings:
     push_enabled: bool = True
     link_rate_bps: int = 0
     write_batch_ms: int = 0
+    # --- TRUE credential sessions (collaboration/true). Everything below is OFF unless AUTH_ENABLED=true. ---
+    auth_enabled: bool = False
+    auth_sidecar_url: str = ""         # this region's loopback auth sidecar, e.g. http://127.0.0.1:4101
+    auth_sidecar_token: str = ""       # service credential for that sidecar
+    auth_issuer_file: str = ""         # PINNED issuer public key file {issuerId, publicJwk}
+    auth_session_key_dir: str = ""     # PINNED regional session public keys, one <region>.json each
+    auth_status_file: str = ""         # sidecar-mirrored, issuer-signed status snapshot
     carry_enabled: bool = True
     write_queue_max: int = 100
     link_slow_bps: int = 10000
@@ -73,6 +80,12 @@ def load() -> Settings:
         push_enabled=env("PUSH_ENABLED", "1") == "1",
         link_rate_bps=int(env("LINK_RATE_BPS", "0")),
         write_batch_ms=int(env("WRITE_BATCH_MS", "0")),
+        auth_enabled=env("AUTH_ENABLED", "false").lower() in ("1", "true", "yes"),
+        auth_sidecar_url=env("AUTH_SIDECAR_URL", "").rstrip("/"),
+        auth_sidecar_token=env("AUTH_SIDECAR_TOKEN", ""),
+        auth_issuer_file=env("TRUE_ISSUER_PUBLIC_JWK_FILE", ""),
+        auth_session_key_dir=env("AUTH_SESSION_KEY_DIR", ""),
+        auth_status_file=env("AUTH_STATUS_FILE", ""),
         carry_enabled=env("ENABLE_CARRY", "1") == "1",
         write_queue_max=int(env("WRITE_QUEUE_MAX", "100")),
         link_slow_bps=int(env("LINK_SLOW_BPS", "10000")),

@@ -24,6 +24,12 @@ def region_env(region: str, regions: list) -> dict:
         API_KEYS=f"dev-officer:officer-{region}-1:officer",
         PYTHONPATH=str(ROOT),
     )
+    # Opt-in TRUE credential sessions: AUTH_ENABLED=true python scripts/run_one.py mum
+    # (needs `python scripts/true_stack.py up --provision` first; the ports are the fixed demo ones).
+    if os.environ.get("AUTH_ENABLED", "").lower() in ("1", "true", "yes"):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from true_stack import Stack
+        env.update(Stack().region_env(region))
     return env
 
 

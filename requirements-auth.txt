@@ -1,0 +1,2 @@
+# Opt-in: only needed when AUTH_ENABLED=true (TRUE credential sessions). Core runs do not need it.
+PyJWT[crypto]>=2.8

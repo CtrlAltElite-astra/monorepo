@@ -6,6 +6,9 @@ Resolve (supervisor only) writes a RESOLVE event that supersedes exactly the liv
   403                                           officers (and anyone but a supervisor) may not resolve
 The decision replicates like any event. A write that had not seen it is concurrent with it and opens a
 new review item: a resolution never hides an edit it did not see.
+
+Auth mode (TRUE sessions): the RESOLVE event carries the supervisor's verified provenance inside its signed hash,
+and the review queue lists only carts the caller may read.
 """
 from typing import Any, Optional
 
@@ -15,9 +18,10 @@ from pydantic import BaseModel, Field
 from contracts import schemas
 from region import store
 from region.api import receipts, writes
-from region.api.routes_reports import failure, respond
-from region.auth import require
+from region.api.routes_reports import _prov, failure, respond
+from region.auth import read_context, require
 from region.engine.derive import order
+from region.trust import ownership
 
 router = APIRouter(prefix="/v1", tags=["review"])
 
@@ -40,19 +44,23 @@ def resolve_report(report_id: str, body: ResolveBody, auth=Depends(require("reso
     op_id = body.op_id or (idempotency_key[: schemas.OP_ID_MAX] if idempotency_key else None)
     try:
         result = writes.resolve(report_id, body.field, value, body.candidates, body.reason, auth.actor,
-                                role=auth.role, auth_mode=auth.mode, op_id=op_id)
+                                role=auth.role, auth_mode=auth.mode, op_id=op_id, provenance=_prov(auth))
     except (writes.NotFound, writes.StaleEdit, writes.NoConflict, writes.OpIdReuse) as exc:
         return failure(exc)
     return respond(result, 201)
 
 
 @router.get("/review")
-def review_queue():
-    """Open review items on this node, newest first: [{report_id, title, field, receipt}]."""
+def review_queue(auth=Depends(read_context)):
+    """Open review items on this node, newest first: [{report_id, title, field, receipt}].
+    Auth mode: only carts the caller may read."""
     items = []
     with store.read() as conn:
+        owners = ownership.owners(conn) if auth is not None else {}
         for row in conn.execute("SELECT report_id, view FROM reports WHERE needs_review=1 AND incomplete=0"):
             report_id = row[0]
+            if auth is not None and not ownership.can_read(auth, owners.get(report_id)):
+                continue
             view = store.get_view(conn, report_id)
             created = min((order(e) for e in store.events_for(conn, report_id) if e["type"] == "CREATE"), default=(0,))
             for conflict in view["conflicts"]:

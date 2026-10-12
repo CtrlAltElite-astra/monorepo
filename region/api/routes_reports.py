@@ -14,8 +14,9 @@ from pydantic import BaseModel, Field
 from contracts import schemas
 from region import config, store
 from region.api import receipts, writes
-from region.auth import require
+from region.auth import read_context, require
 from region.engine import canonical
+from region.trust import ownership
 from region.engine.derive import order
 from region.sync import state
 from region.trust import signing
@@ -125,6 +126,27 @@ def _op(body_op: Optional[str], header_op: Optional[str]) -> Optional[str]:
     return body_op or (header_op[: schemas.OP_ID_MAX] if header_op else None)
 
 
+def _prov(auth) -> Optional[dict]:
+    """Auth mode: provenance for the signed event, taken ONLY from the verified session."""
+    if not config.settings.auth_enabled:
+        return None
+    return {"role": auth.role, "auth_mode": auth.mode, "credential_id": auth.credential_id}
+
+
+def _guard_write(report_id: str, auth) -> None:
+    """Auth mode: a cart may be edited only by its owner. Other people's carts do not exist for officers."""
+    if not config.settings.auth_enabled:
+        return
+    with store.read() as conn:
+        if not store.report_exists(conn, report_id):
+            return                                   # the write path answers 404
+        owner = ownership.report_owner(conn, report_id)
+    if not ownership.can_read(auth, owner):
+        raise HTTPException(404, "unknown report")   # no existence leak
+    if not ownership.can_write(auth, owner):
+        raise HTTPException(403, detail={"code": "not_your_cart", "message": "Only the cart owner may edit it"})
+
+
 @router.post("/reports", status_code=201)
 def create_report(body: CreateReport, auth=Depends(require("create")),
                   idempotency_key: Optional[str] = Header(None)):
@@ -138,7 +160,8 @@ def create_report(body: CreateReport, auth=Depends(require("create")),
     }
     try:
         result = writes.local_write(body.report_id, "CREATE", None, value, auth.actor,
-                                    op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode)
+                                    op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode,
+                                    provenance=_prov(auth))
     except (writes.OpIdReuse, writes.ReportExists) as exc:
         return failure(exc)
     return respond(result, 201)
@@ -151,9 +174,11 @@ def patch_report(report_id: str, body: PatchReport, auth=Depends(require("set"))
         value = schemas.validate_field(body.field, body.value)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    _guard_write(report_id, auth)
     try:
         result = writes.local_write(report_id, "SET", body.field, value, auth.actor, expected=body.expected,
-                                    op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode)
+                                    op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode,
+                                    provenance=_prov(auth))
     except (writes.NotFound, writes.StaleEdit, writes.OpIdReuse) as exc:
         return failure(exc)
     return respond(result, 200)
@@ -162,27 +187,38 @@ def patch_report(report_id: str, body: PatchReport, auth=Depends(require("set"))
 @router.post("/reports/{report_id}/notes", status_code=201)
 def add_note(report_id: str, body: NoteBody, auth=Depends(require("note")),
              idempotency_key: Optional[str] = Header(None)):
+    _guard_write(report_id, auth)
     try:
         result = writes.local_write(report_id, "NOTE", None, {"text": body.text}, auth.actor,
-                                    op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode)
+                                    op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode,
+                                    provenance=_prov(auth))
     except (writes.NotFound, writes.OpIdReuse) as exc:
         return failure(exc)
     return respond(result, 201)
 
 
 @router.get("/reports")
-def list_reports(limit: int = Query(100, ge=0), cursor: int = Query(0, ge=0)):
-    """Newest first (contracts.md 4.3); `limit` is clamped to 1..500, `cursor` is an offset."""
+def list_reports(limit: int = Query(100, ge=0), cursor: int = Query(0, ge=0), auth=Depends(read_context)):
+    """Newest first (contracts.md 4.3); `limit` is clamped to 1..500, `cursor` is an offset.
+    Auth mode: only carts the caller may read (region/trust/ownership.py)."""
     reachable = _reachability()  # once per request, not once per report
+    lim = max(1, min(limit, 500))
     with store.read() as conn:
-        ids = store.report_ids_newest_first(conn, max(1, min(limit, 500)), cursor)
+        if auth is None:
+            ids = store.report_ids_newest_first(conn, lim, cursor)
+        else:
+            owners = ownership.owners(conn)
+            everything = store.report_ids_newest_first(conn, 100000, 0)
+            ids = [r for r in everything if ownership.can_read(auth, owners.get(r))][cursor:cursor + lim]
         return [build_report(conn, rid, reachable) for rid in ids]
 
 
 @router.get("/reports/{report_id}")
-def get_report(report_id: str):
+def get_report(report_id: str, auth=Depends(read_context)):
     with store.read() as conn:
         report = build_report(conn, report_id)
+        if report is not None and auth is not None and not ownership.can_read(auth, ownership.report_owner(conn, report_id)):
+            report = None
     if report is None:
         raise HTTPException(404, "unknown report")
     return report
@@ -198,11 +234,14 @@ def sig_status(ev: dict) -> str:
 
 
 @router.get("/reports/{report_id}/history")
-def report_history(report_id: str):
+def report_history(report_id: str, auth=Depends(read_context)):
     """Audit trail: every event of the report (any origin) in tie-break (HLC) order, exactly as stored and
-    replicated, each with sig_status and whether it reached this node through POST /v1/carry."""
+    replicated, each with sig_status and whether it reached this node through POST /v1/carry.
+    Auth mode: only for carts the caller may read."""
     with store.read() as conn:
         events = sorted(store.events_for(conn, report_id), key=order)
+        if events and auth is not None and not ownership.can_read(auth, ownership.report_owner(conn, report_id)):
+            events = []
         carried = store.carried_ids(conn, [e["event_id"] for e in events])
     if not events:
         raise HTTPException(404, "unknown report")

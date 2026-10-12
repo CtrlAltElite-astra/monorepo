@@ -14,6 +14,9 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 def admin_guard(auth=Depends(require_key)):
     if not config.settings.enable_admin:
         raise HTTPException(403, "admin disabled")
+    # Auth mode: the admin surface needs an ADMIN credential. A supervisor is not an admin.
+    if config.settings.auth_enabled and auth.role != "admin":
+        raise HTTPException(403, detail={"code": "forbidden", "message": "admin role required"})
     return auth
 
 

@@ -1,0 +1,20 @@
+{
+  "name": "syncshield-true",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "services/*"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "spike": "node scripts/spike.ts",
+    "brand": "node scripts/sync-brand.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.3"
+  },
+  "description": "TRUE (partner) credential code adapted for SyncShield; see PROVENANCE.md"
+}

@@ -9,6 +9,10 @@ Every event is hashed and signed by THIS region inside the write transaction (pl
   report_id    a client-chosen "R-" + 8 hex for carts; otherwise the server makes R-<region>-<seq>.
   observed     the evidence a close / new-info write had seen (CLOSE_VS_NEW_INFO, plan 6.7).
   sig          Ed25519 by this region's key (region/engine/signing.py); None when no key is provisioned.
+
+Auth mode (AUTH_ENABLED, TRUE credential sessions) adds `provenance` = {role, auth_mode, credential_id} taken from
+the VERIFIED session. It is put in the envelope BEFORE hashing and signing, so it is part of the signed history
+(a CREATE also fixes the cart `owner`), and it binds an op_id to the actor who first used it.
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -87,7 +91,8 @@ def _same_request(prior: dict, type_: str, report_id: Optional[str], field: Opti
             and (report_id is None or prior["report_id"] == report_id))
 
 
-def _append(conn, *, report_id, type_, field, value, actor, role, auth_mode, op_id, supersedes, reason=None) -> dict:
+def _append(conn, *, report_id, type_, field, value, actor, role, auth_mode, op_id, supersedes, reason=None,
+            provenance=None) -> dict:
     """Build, hash, sign and store one event and refresh its report view. Caller holds store.tx()."""
     region = config.settings.region
     seq = store.next_seq(conn)
@@ -101,6 +106,11 @@ def _append(conn, *, report_id, type_, field, value, actor, role, auth_mode, op_
         priority=1, op_id=op_id, observed=_observed(conn, report_id, type_, field, value) if type_ != "CREATE" else None,
         actor=actor, role=role, auth_mode=auth_mode, reason=reason, wall=_wall(), sig=None,
     )
+    if provenance is not None:   # auth mode: before canonical hashing and signing, never attached afterwards
+        ev.update(role=provenance.get("role"), auth_mode=provenance.get("auth_mode"),
+                  credential_id=provenance.get("credential_id"))
+        if type_ == "CREATE":
+            ev["owner"] = actor   # immutable cart owner, replicated through the signed event log
     ev["priority"] = _priority(ev)
     ev["hash"] = canonical.event_hash(ev)
     ev["sig"] = signing.sign(region, ev["hash"])  # None when no key is provisioned: carry then refuses the event
@@ -121,14 +131,19 @@ def _after_commit(ev: dict) -> None:
         pass
 
 
+def _own_op(prior: dict, actor: str, provenance) -> bool:
+    """Auth mode: an op_id belongs to the actor who first used it; never hand out someone else's result."""
+    return provenance is None or prior.get("actor") == actor
+
+
 def local_write(report_id, type_, field, value, actor, expected=None, *, op_id=None,
-                role="officer", auth_mode="online") -> WriteResult:
+                role="officer", auth_mode="online", provenance=None, reason=None) -> WriteResult:
     """Append one event and refresh the report view in the same transaction."""
     with store.tx() as conn:
         if op_id:
             prior = store.event_by_op(conn, op_id)
             if prior is not None:  # same operation seen here already (written here, replicated or carried)
-                if not _same_request(prior, type_, report_id, field, value):
+                if not _same_request(prior, type_, report_id, field, value) or not _own_op(prior, actor, provenance):
                     raise OpIdReuse(op_id)
                 return WriteResult(prior, replay=True)
         if type_ == "CREATE":
@@ -142,27 +157,30 @@ def local_write(report_id, type_, field, value, actor, expected=None, *, op_id=N
         if expected is not None and sorted(expected) != sorted(live):
             raise StaleEdit(live)
         ev = _append(conn, report_id=report_id, type_=type_, field=field, value=value, actor=actor,
-                     role=role, auth_mode=auth_mode, op_id=op_id, supersedes=live)
+                     role=role, auth_mode=auth_mode, op_id=op_id, supersedes=live, reason=reason,
+                     provenance=provenance)
     _after_commit(ev)
     return WriteResult(ev)
 
 
-def local_write_ex(report_id, type_, field, value, actor, expected=None, op_id=None, new_report_id=None):
+def local_write_ex(report_id, type_, field, value, actor, expected=None, op_id=None, new_report_id=None,
+                   provenance=None, reason=None):
     """Compatibility shape used by Lane C's first cut: returns (event, replayed)."""
     result = local_write(new_report_id if type_ == "CREATE" else report_id, type_, field, value, actor,
-                         expected, op_id=op_id)
+                         expected, op_id=op_id, provenance=provenance, reason=reason)
     return result.event, result.replay
 
 
 def resolve(report_id, field, value, candidates, reason, actor, *, role="supervisor", auth_mode="online",
-            op_id=None) -> WriteResult:
+            op_id=None, provenance=None) -> WriteResult:
     """A supervisor settles a conflicted field (plan 6.7). The RESOLVE event supersedes exactly the live
     candidates and replicates like any event; it never hides an edit it did not see."""
     with store.tx() as conn:
         if op_id:
             prior = store.event_by_op(conn, op_id)
             if prior is not None:
-                if not (prior["type"] == "RESOLVE" and prior.get("field") == field and prior["value"] == value):
+                if not (prior["type"] == "RESOLVE" and prior.get("field") == field and prior["value"] == value
+                        and _own_op(prior, actor, provenance)):
                     raise OpIdReuse(op_id)
                 return WriteResult(prior, replay=True)
         if not store.report_exists(conn, report_id):
@@ -174,6 +192,7 @@ def resolve(report_id, field, value, candidates, reason, actor, *, role="supervi
         if field not in [c["field"] for c in view["conflicts"]]:
             raise NoConflict(field)
         ev = _append(conn, report_id=report_id, type_="RESOLVE", field=field, value=value, actor=actor,
-                     role=role, auth_mode=auth_mode, op_id=op_id, supersedes=live, reason=reason)
+                     role=role, auth_mode=auth_mode, op_id=op_id, supersedes=live, reason=reason,
+                     provenance=provenance)
     _after_commit(ev)
     return WriteResult(ev)

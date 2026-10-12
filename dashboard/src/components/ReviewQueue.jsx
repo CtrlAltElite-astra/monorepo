@@ -69,7 +69,7 @@ export default function ReviewQueue({ snaps, regions, onChange }) {
   return (
     <section className="panel">
       <h2>Review queue <span className="chip">{supported ? items.length : 'n/a'}</span></h2>
-      {!supported && <div className="muted">Review API not available on the backend yet (arrives in Phase 2).</div>}
+      {!supported && <div className="muted">Review API not available on this backend (older build, or no session in auth mode).</div>}
       {supported && !items.length && <div className="muted">Nothing needs a supervisor.</div>}
       {items.map((it) => <Item key={keyOf(it)} item={it} regions={regions} onChange={onChange} />)}
     </section>

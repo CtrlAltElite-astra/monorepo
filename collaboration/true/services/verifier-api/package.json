@@ -1,0 +1,5 @@
+{
+  "name": "@true/verifier-api", "version": "0.1.0", "private": true, "type": "module",
+  "scripts": { "dev": "node --watch src/server.ts" },
+  "dependencies": { "@true/shared": "*", "@true/credentials": "*", "hono": "^4.13.13", "@hono/node-server": "^2.1.4", "zod": "^4.6.6" }
+}

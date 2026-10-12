@@ -54,6 +54,8 @@ export class SyncShieldClient {
   constructor(regions, opts = {}) {
     this.cfg = { ...DEFAULTS, ...(opts.config || {}) }
     this.apiKey = opts.apiKey || 'dev-officer'
+    // Auth mode: getAuthHeader(persona) -> {Authorization: 'Bearer ...'} (or {}). No API key is sent then.
+    this.getAuthHeader = opts.getAuthHeader || null
     this.fetch = opts.fetch || ((...a) => globalThis.fetch(...a))
     this.now = opts.now || (() => Date.now())
     this.regions = regions.map((r) => ({ id: r.id, url: r.url.replace(/\/$/, '') }))
@@ -97,7 +99,7 @@ export class SyncShieldClient {
 
   // ---- low-level http ---------------------------------------------------
   async _http(node, method, path, body, timeoutMs, extraHeaders) {
-    const headers = { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey, ...(extraHeaders || {}) }
+    const headers = { 'Content-Type': 'application/json', ...(this.getAuthHeader ? {} : { 'X-API-Key': this.apiKey }), ...(extraHeaders || {}) }
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null
     const p = this.fetch(node.url + path, {
       method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: ctl ? ctl.signal : undefined,
@@ -162,7 +164,8 @@ export class SyncShieldClient {
   /**
    * @returns {{ok:boolean,status:number,body:any,node:string|null,tried:number,ms:number,queued?:boolean,opId:string}}
    */
-  async call(method, path, body = {}) {
+  async call(method, path, body = {}, callOpts = {}) {
+    const auth = this.getAuthHeader ? this.getAuthHeader(callOpts.persona) : undefined
     const opId = (body && body.op_id) || uuid()
     const payload = method === 'GET' ? undefined : { ...body, op_id: opId }
     const started = this.now()
@@ -170,11 +173,11 @@ export class SyncShieldClient {
     this.counters.requests += 1
 
     for (const node of this.order()) {
-      if (node.id !== this.lastRegion && this.outbox.length) await this.carry(node)
+      if (node.id !== this.lastRegion && this.outbox.length) await this.carry(node, auth)
       const t0 = this.now()
       let res
       try {
-        res = await this._http(node, method, path, payload, this.cfg.REQUEST_TIMEOUT_MS)
+        res = await this._http(node, method, path, payload, this.cfg.REQUEST_TIMEOUT_MS, auth)
       } catch (e) {
         this._markDown(node, e)
         tried += 1
@@ -241,12 +244,12 @@ export class SyncShieldClient {
   }
 
   // ---- carry ---------------------------------------------------------------
-  async carry(node) {
+  async carry(node, extraHeaders) {
     if (node.carrySupported === false || !this.outbox.length) return null
     const events = this.outbox.slice(0, this.cfg.MAX_CARRY).map((o) => o.event)
     this.counters.carryCalls += 1
     try {
-      const r = await this._http(node, 'POST', '/v1/carry', { events }, this.cfg.REQUEST_TIMEOUT_MS)
+      const r = await this._http(node, 'POST', '/v1/carry', { events }, this.cfg.REQUEST_TIMEOUT_MS, extraHeaders)
       if (r.status === 404 || r.status === 405) { node.carrySupported = false; return null }
       if (!r.ok) return null
       node.carrySupported = true
@@ -315,7 +318,8 @@ export class SyncShieldClient {
       let usedHas = false
       if (node.hasSupported !== false && ids.length) {
         try {
-          const r = await this._http(node, 'POST', '/v1/events/has', { ids: ids.slice(0, 500) }, this.cfg.REQUEST_TIMEOUT_MS * 2)
+          const r = await this._http(node, 'POST', '/v1/events/has', { ids: ids.slice(0, 500) }, this.cfg.REQUEST_TIMEOUT_MS * 2,
+            this.getAuthHeader ? this.getAuthHeader() : undefined)
           if (r.status === 404 || r.status === 405) node.hasSupported = false
           else if (r.ok) {
             node.hasSupported = true
