@@ -51,7 +51,7 @@ export interface TimelineEntry {
 export interface Counters {
   requests: number          // calls made by the storefront
   errors: number            // errors SHOWN to the shopper (the number that must stay 0)
-  failovers: number         // calls that needed a second node
+  failovers: number         // calls that needed a second node, or went to the next one because a probe found the last one down
   acknowledged: number      // distinct events a node acknowledged (201 / replayed 200)
   carried: number           // events handed to a node by POST /v1/carry
   carryRejected: number
@@ -228,7 +228,8 @@ export class SyncShieldClient {
           this.outboxAdd(ev)
           if (!this.ackedIds.has(ev.event_id)) { this.ackedIds.add(ev.event_id); this.counters.acknowledged++ }
         }
-        if (failedOn.length) this.counters.failovers++
+        const movedOn = !!this.lastRegion && region !== this.lastRegion && !this.health.get(this.lastRegion)?.up // the probe saw the old node die first
+        if (failedOn.length || movedOn) this.counters.failovers++
         this.lastRegion = region
         this.pushTimeline({ op_id, label: opts.label ?? `${method} ${path}`, region, ms: Date.now() - started, tried: failedOn.length, failedOn, status: res.status, queued: false })
         return res

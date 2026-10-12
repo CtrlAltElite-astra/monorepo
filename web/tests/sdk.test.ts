@@ -121,6 +121,20 @@ describe('zero-loss failover (T17, T20, A2)', () => {
   })
 })
 
+describe('a probe that finds the node dead first is still a failover', () => {
+  it('the next write goes straight to the survivor, carries first, and is counted once', async () => {
+    const { client, chaos, add, advance } = await shop()
+    await add('CHAI-01')
+    await chaos.crash('mum')
+    await advance(4000) // the health probe notices before the shopper taps again
+    const res = await add('MAT-01')
+    expect(res.status).toBe(201)
+    expect(client.getState().counters).toMatchObject({ errors: 0, failovers: 1 })
+    expect(client.getState().timeline.at(-1)).toMatchObject({ tried: 0, queued: false }) // no failed attempt: the node was already known down
+    expect(client.getState().timeline.at(-1)!.region).not.toBe('mum')
+  })
+})
+
 describe('what is an answer and what is a failure', () => {
   it('403, 409 and 422 are answers: no failover, no extra requests', async () => {
     const { client, transport, run } = await shop()
