@@ -1,4 +1,9 @@
-<<<<<<< HEAD
+> **Vendored copy, adapted for SyncShield.** This folder is the partner team's TRUE code (CodeAstra 2.0 PS1),
+> brought into the SyncShield repo for the sign-in and authorization work. What was copied unchanged, what was
+> changed and why, and how SyncShield uses it are in [PROVENANCE.md](PROVENANCE.md) and
+> [`docs/convergence-true.md`](../../docs/convergence-true.md). Parts of the sections below describe the partner's
+> own full repo (`contracts`, `apps/issuer-web`, `apps/verifier-web`) that are not included here.
+
 <!-- brand:start -->
 # TRUE
 
@@ -8,7 +13,7 @@
 Privacy-preserving verifiable identity network, built for CodeAstra 2.0 (PS1, Cybersecurity & Blockchain).
 A student proves one fact (for example "I am over 18") to a verifier without showing the rest of their ID.
 
-**Status:** M1 of 7 done: issue → wallet → consent → selective disclosure → live verification. Revocation, verifier authentication, audit log and the chain registry come next (see `PLAN.md`).
+**Status:** M1 of 7 done: issue → wallet → consent → selective disclosure → live verification. Revocation, verifier authentication, audit log and the chain registry come next (the partner team's own roadmap).
 
 ## Run it
 
@@ -65,7 +70,3 @@ Every third-party library used. All code in this repository was written during t
 | [Hardhat](https://github.com/NomicFoundation/hardhat) + hardhat-toolbox-viem, [viem](https://github.com/wevm/viem) | Local chain, contract tests | MIT |
 | [Vitest](https://github.com/vitest-dev/vitest), [TypeScript](https://github.com/microsoft/TypeScript) | Tests, type checking | MIT, Apache-2.0 |
 | Node.js built-ins (`node:sqlite`, WebCrypto) | Database, key generation, randomness | — |
-
-=======
-# TRUE
->>>>>>> 6cb48062ca13629d5865b01f46ba2e2cfae7f7c5
