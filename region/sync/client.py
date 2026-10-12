@@ -12,7 +12,7 @@ import httpx
 from region import config, store
 from region.sync import ingest, links, push, state
 
-log = logging.getLogger("lifeboat.sync")
+log = logging.getLogger("SyncShield.sync")
 
 
 def _headers() -> dict:

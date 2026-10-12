@@ -10,7 +10,7 @@ Last updated: 2026-10-12 (Basic build merged to `main`; PDF 2 Phase 1 for Lane A
 
 ## 1. Project in one paragraph
 
-**Lifeboat** (CodeAstra 2.0, RGIT, PS2: geo-distributed disaster data replication with graceful
+**SyncShield** (CodeAstra 2.0, RGIT, PS2: geo-distributed disaster data replication with graceful
 degradation). Each region (mum :8001, pun :8002, later del :8003) is an independent FastAPI +
 SQLite service that always accepts writes. Every change is an immutable signed-later event; a
 region's visible data is `derive(event_set)`; replication copies missing events (pull by per-origin

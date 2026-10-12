@@ -1,6 +1,6 @@
 # Partner contract (PROPOSED, for the Convergence round) — owner: Akshit
 
-Status: **proposal, not yet agreed with the partner team.** Everything below is what Lifeboat
+Status: **proposal, not yet agreed with the partner team.** Everything below is what SyncShield
 will call and supply; change it only after the partner confirms. Our side is built behind one
 interface, `region/trust/adapter.py::TrustAdapter`, so whichever Cybersecurity and Blockchain
 problem statement we are paired with, the work is one adapter class.
@@ -46,7 +46,7 @@ Each accepted event records how it was authorised in a signed `auth` block (Phas
 - The signed, replicated audit trail: `GET /v1/reports/{id}/history` (event, actor, `supersedes`, `hash`, `sig`, `auth`).
 - Optionally, a Merkle root per event range, so the partner can anchor batches. **Only**
   `{region, seq_from, seq_to, merkle_root, signer, time}` (about 100 bytes) is ever sent: no report
-  content, no names, no locations. All data in Lifeboat is synthetic.
+  content, no names, no locations. All data in SyncShield is synthetic.
 - A partition-tolerant place to record the partner's verification results (they become events).
 
 ## 4. How the three partner problem statements map onto the adapter

@@ -15,7 +15,7 @@ from region import config, store
 from region.engine import canonical
 from region.sync import links, state
 
-log = logging.getLogger("lifeboat.push")
+log = logging.getLogger("SyncShield.push")
 
 # Per-peer in-memory priority queues: queue[peer] -> PushQueue
 _queues: dict[str, "PushQueue"] = {}

@@ -55,7 +55,7 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1>Lifeboat</h1>
+        <h1>SyncShield</h1>
         <span className={`badge conv-${conv}`}>{conv}</span>
         <div className="spacer" />
         {pairs.map(([a, b]) => (

@@ -1,4 +1,4 @@
-# Lifeboat contracts (v1) — owner: Akshit
+# SyncShield contracts (v1) — owner: Akshit
 
 Frozen at 14:30. After that this file, `schemas.py` and the fixtures may only **grow**
 (new optional fields, new endpoints). Never rename or remove. Changes go through a PR

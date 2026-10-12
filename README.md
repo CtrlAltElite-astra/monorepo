@@ -1,4 +1,4 @@
-# Lifeboat — Geo-Distributed Disaster Data Replication with Graceful Degradation
+# SyncShield — Geo-Distributed Disaster Data Replication with Graceful Degradation
 
 CodeAstra 2.0 (RGIT) · PS2 · Team lanes: **A** Akshit · **B** Rahil · **C** Miti · **D** Simrit
 

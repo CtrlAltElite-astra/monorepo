@@ -8,7 +8,7 @@
     </marker>
   </defs>
   <rect width="1100" height="640" fill="#ffffff"/>
-  <text x="550" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#14213d">Lifeboat architecture: independent regions, replicate by copying events</text>
+  <text x="550" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#14213d">SyncShield architecture: independent regions, replicate by copying events</text>
 
   <rect x="330" y="56" width="440" height="62" rx="10" fill="#f1ecfb" stroke="#7c3aed" stroke-width="1.5"/>
   <text x="550" y="82" text-anchor="middle" font-size="16" font-weight="700" fill="#5b21b6">Operator dashboard (React + Vite, :5173)</text>

@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
         store.close()
 
 
-app = FastAPI(title=f"Lifeboat region {config.settings.region}", version="1", lifespan=lifespan)
+app = FastAPI(title=f"SyncShield region {config.settings.region}", version="1", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(routes_reports.router)
 app.include_router(routes_status.router)
