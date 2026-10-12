@@ -60,6 +60,11 @@
   ],
   "incomplete": false,
   "consistency": {
-    "replication": "LOCAL_ONLY"
+    "replication": "LOCAL_ONLY",
+    "confirmed_by": [],
+    "awaiting": [
+      "pun"
+    ],
+    "stale_possible": true
   }
 }
