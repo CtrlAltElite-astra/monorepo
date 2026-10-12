@@ -2,27 +2,16 @@
 
 Replica follows the same write and receive rules as the real region, built only
 from engine functions. The convergence fuzz test runs three of them, and the
-example fixtures are made with it. region/api/writes.py must fill supersedes,
-observed, priority and sig the same way.
+example fixtures are made with it. Writes are built by envelope.new_event(), the
+function region/api/writes.py is meant to call too (write path v2), so both fill
+supersedes, observed, priority and sig the same way.
 """
 from datetime import datetime, timezone
 
 from contracts.schemas import validate_field
-from region.engine import admit, canonical, digest, hlc, policy, priority, signing
+from region.engine import admit, canonical, digest, envelope, hlc, signing
 from region.engine.derive import derive, well_formed
-
-
-def make_event(origin, seq, type_, field=None, value=None, supersedes=(), hlc=None, report_id="R-1", **extra) -> dict:
-    """One sealed event envelope (contract 5.1): the given fields, defaults for the rest, and its hash.
-
-    extra overrides or adds keys, e.g. op_id="..." or observed=[...] (observed is absent unless given).
-    """
-    ev = dict(v=1, event_id=f"{origin}:{seq}", origin=origin, seq=seq, report_id=report_id, type=type_,
-              field=field, value=value, supersedes=list(supersedes), hlc=list(hlc or (1000 + seq, 0)),
-              priority=1, op_id=None, actor=f"agent-{origin}-1", reason=None, wall="", sig=None)
-    ev.update(extra)
-    ev["hash"] = canonical.event_hash(ev)
-    return ev
+from region.engine.envelope import make_event  # noqa: F401  (tests build events with it)
 
 
 class Replica:
@@ -76,18 +65,11 @@ class Replica:
         before = self.view(report_id)
         self.seq += 1
         self.clock = hlc.tick(self.clock, now_ms)
-        extra = {}
-        observed = policy.observed_for(type_, field, value, before)
-        if observed is not None:
-            extra["observed"] = observed
-        ev = make_event(
-            self.region, self.seq, type_, field, value,
-            supersedes=before["live"].get(field, []) if type_ in ("SET", "RESOLVE") else [],
-            hlc=self.clock, report_id=report_id, op_id=op_id, reason=reason,
-            priority=priority.classify({"type": type_, "field": field, "value": value}, before, bulk),
-            wall=datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc).isoformat(timespec="seconds"), **extra)
-        if self.private_key:
-            ev["sig"] = signing.sign_with(self.private_key, ev["hash"])
+        signer = (lambda h: signing.sign_with(self.private_key, h)) if self.private_key else None
+        ev = envelope.new_event(
+            self.region, self.seq, self.clock, type_, report_id, field, value, before, op_id=op_id,
+            reason=reason, bulk=bulk, signer=signer,
+            wall=datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc).isoformat(timespec="seconds"))
         self.events[ev["event_id"]] = ev
         return ev
 

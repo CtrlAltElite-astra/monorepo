@@ -86,7 +86,8 @@ class Shopper:
             return
         if status != 200:
             return
-        acked = [p.get("acked") or {} for p in (s.get("peers") or {}).values()]
+        # contract 5.4 calls it acked; the status builder today reports the same heads as their_heads
+        acked = [p.get("acked") or p.get("their_heads") or {} for p in (s.get("peers") or {}).values()]
         for eid, e in list(self.outbox.items()):
             if any(a.get(e["origin"], 0) >= e["seq"] for a in acked):
                 del self.outbox[eid]
