@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 640" width="1100" height="640" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#1d4ed8"/>
+    </marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#6b7280"/>
+    </marker>
+  </defs>
+  <rect width="1100" height="640" fill="#ffffff"/>
+  <text x="550" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#14213d">Lifeboat architecture: independent regions, replicate by copying events</text>
+
+  <rect x="330" y="56" width="440" height="62" rx="10" fill="#f1ecfb" stroke="#7c3aed" stroke-width="1.5"/>
+  <text x="550" y="82" text-anchor="middle" font-size="16" font-weight="700" fill="#5b21b6">Operator dashboard (React + Vite, :5173)</text>
+  <text x="550" y="104" text-anchor="middle" font-size="13" fill="#374151">polls /v1/status and /v1/reports of each region every 1 s; shows only backend state</text>
+
+  <g stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="5 4" fill="none" marker-end="url(#a)">
+    <path d="M430 118 L190 205"/>
+    <path d="M550 118 L550 205"/>
+    <path d="M670 118 L910 205"/>
+  </g>
+
+  <g>
+    <rect x="60" y="205" width="260" height="215" rx="12" fill="#e6f4f2" stroke="#0f766e" stroke-width="2"/>
+    <rect x="60" y="205" width="260" height="38" rx="12" fill="#0f766e"/>
+    <text x="190" y="230" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">MUMBAI  mum  :8001</text>
+    <g font-size="13" fill="#1f2937" text-anchor="middle">
+      <text x="190" y="270">API: write, validate, seq, HLC</text>
+      <text x="190" y="292">append event, derive(), view</text>
+      <text x="190" y="314">pull loop + /internal/v1/sync</text>
+      <text x="190" y="336">link switch (both directions)</text>
+      <text x="190" y="358">/v1/status: heads, peers, level</text>
+      <text x="190" y="380">1 Uvicorn worker</text>
+    </g>
+  </g>
+  <g>
+    <rect x="420" y="205" width="260" height="215" rx="12" fill="#e6f4f2" stroke="#0f766e" stroke-width="2"/>
+    <rect x="420" y="205" width="260" height="38" rx="12" fill="#0f766e"/>
+    <text x="550" y="230" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">PUNE  pun  :8002</text>
+    <g font-size="13" fill="#1f2937" text-anchor="middle">
+      <text x="550" y="270">API: write, validate, seq, HLC</text>
+      <text x="550" y="292">append event, derive(), view</text>
+      <text x="550" y="314">pull loop + /internal/v1/sync</text>
+      <text x="550" y="336">link switch (both directions)</text>
+      <text x="550" y="358">/v1/status: heads, peers, level</text>
+      <text x="550" y="380">1 Uvicorn worker</text>
+    </g>
+  </g>
+  <g>
+    <rect x="780" y="205" width="260" height="215" rx="12" fill="#f9fafb" stroke="#6b7280" stroke-width="2" stroke-dasharray="7 5"/>
+    <rect x="780" y="205" width="260" height="38" rx="12" fill="#6b7280"/>
+    <text x="910" y="230" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">DELHI  del  :8003</text>
+    <g font-size="13" fill="#4b5563" text-anchor="middle">
+      <text x="910" y="282">same code, own database</text>
+      <text x="910" y="304">configured now,</text>
+      <text x="910" y="326">process starts in Phase 3</text>
+      <text x="910" y="360">catches up from any peer</text>
+    </g>
+  </g>
+
+  <g stroke="#1d4ed8" stroke-width="2.2" fill="none">
+    <path d="M320 300 L420 300" marker-start="url(#a)" marker-end="url(#a)"/>
+    <path d="M680 300 L780 300" marker-start="url(#a)" marker-end="url(#a)" stroke-dasharray="6 4"/>
+  </g>
+  <text x="370" y="290" text-anchor="middle" font-size="13" font-weight="700" fill="#1d4ed8">pull</text>
+  <text x="730" y="290" text-anchor="middle" font-size="13" fill="#4b5563">pull (Phase 3)</text>
+
+  <g>
+    <ellipse cx="190" cy="470" rx="75" ry="14" fill="#fff4dc" stroke="#b45309"/>
+    <rect x="115" y="470" width="150" height="38" fill="#fff4dc" stroke="#b45309"/>
+    <ellipse cx="190" cy="508" rx="75" ry="14" fill="#fff4dc" stroke="#b45309"/>
+    <text x="190" y="494" text-anchor="middle" font-size="13" fill="#1f2937">SQLite WAL  data/mum.db</text>
+    <ellipse cx="550" cy="470" rx="75" ry="14" fill="#fff4dc" stroke="#b45309"/>
+    <rect x="475" y="470" width="150" height="38" fill="#fff4dc" stroke="#b45309"/>
+    <ellipse cx="550" cy="508" rx="75" ry="14" fill="#fff4dc" stroke="#b45309"/>
+    <text x="550" y="494" text-anchor="middle" font-size="13" fill="#1f2937">SQLite WAL  data/pun.db</text>
+    <ellipse cx="910" cy="470" rx="75" ry="14" fill="#f9fafb" stroke="#6b7280" stroke-dasharray="5 4"/>
+    <rect x="835" y="470" width="150" height="38" fill="#f9fafb" stroke="#6b7280" stroke-dasharray="5 4"/>
+    <ellipse cx="910" cy="508" rx="75" ry="14" fill="#f9fafb" stroke="#6b7280" stroke-dasharray="5 4"/>
+    <text x="910" y="494" text-anchor="middle" font-size="13" fill="#4b5563">SQLite WAL  data/del.db</text>
+  </g>
+  <g stroke="#b45309" stroke-width="1.8" fill="none">
+    <path d="M190 420 L190 456"/><path d="M550 420 L550 456"/><path d="M910 420 L910 456" stroke-dasharray="5 4"/>
+  </g>
+
+  <rect x="60" y="560" width="980" height="56" rx="10" fill="#f9fafb" stroke="#9ca3af" stroke-dasharray="6 4"/>
+  <text x="550" y="584" text-anchor="middle" font-size="14" font-weight="700" fill="#374151">Convergence partner (PDF 2): reached only through the trust adapter</text>
+  <text x="550" y="604" text-anchor="middle" font-size="12" fill="#4b5563">credential verify with cached keys, optional anchoring of event-batch Merkle roots; timeout 1.5 s, never on the local write path</text>
+
+  <text x="550" y="545" text-anchor="middle" font-size="12" fill="#6b7280">Each region is a complete stack. Regions meet only through hashed events over /internal/v1/sync, which the link switch can cut.</text>
+</svg>

@@ -67,6 +67,8 @@ npm run dev                       # http://localhost:5173
 Try it: create a report in Mumbai → it appears in Pune within ~3 s. Press **Cut mum↔pun**,
 edit the same field on both sides, **Heal** → one conflict, identical on both.
 
+UI without a backend: set `VITE_FIXTURES=1` in `dashboard/.env` (read-only, uses `contracts/fixtures` and `dashboard/src/mock`).
+
 Restart proof: stop one region, run `python scripts/run_one.py pun` — data is still there.
 
 ## Tests

@@ -41,3 +41,24 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line
 th { font-size: 12px; color: var(--muted); }
 tr.conflict td { background: rgba(180, 83, 9, .1); }
 @media (max-width: 800px) { main { grid-template-columns: 1fr !important; } }
+
+.banner { padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; font-weight: 600; }
+.banner.bad { background: rgba(185, 28, 28, .15); color: var(--bad); border: 1px solid var(--bad); }
+.banner.warn { background: rgba(180, 83, 9, .15); color: var(--warn); border: 1px solid var(--warn); }
+.status-line { margin-bottom: 8px; }
+tr.clickable { cursor: pointer; }
+tr.selected td { outline: 1px solid var(--accent); }
+.drawer { margin-top: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.notes { padding-left: 18px; }
+h3 { margin: 12px 0 4px; font-size: 14px; }
+
+.conv-INCOMPATIBLE { background: var(--bad); }
+.level-OVERLOADED { background: var(--bad); }
+.panel { margin-top: 16px; }
+.panel h2 { margin-bottom: 8px; }
+.receipt { margin: 8px 0; }
+.receipt table { margin-top: 6px; }
+.matrix th, .matrix td { white-space: nowrap; }
+.matrix button { padding: 3px 8px; font-size: 12px; }
+.metrics { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.create label { display: inline-flex; gap: 4px; align-items: center; }
