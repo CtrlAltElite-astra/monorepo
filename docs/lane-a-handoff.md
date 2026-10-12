@@ -38,9 +38,9 @@ attribution lines, and no tool names, in commit messages, PR text, code comments
 ## 3. Branch and repo state
 
 - Remote `https://github.com/CtrlAltElite-astra/monorepo`, default branch `main`.
-- **Working branch: `a/akshit-main`** (from `main`, plus the unmerged docs branch `a/post-merge-notes`). It replaces the
-  earlier Lane A branches `a/lane-a-basic-build`, `a/phase1-roles-history` (both merged by PRs #1 and #4) and
-  `a/post-merge-notes` (merged into this branch). Delete those three remote branches only after this one is pushed.
+- **Lane A branch: `a/akshit-main`** (kept). It was fast-forwarded to `main` after the final merge, so it equals `main` (`121b1ec`).
+  The earlier Lane A branches `a/lane-a-basic-build`, `a/phase1-roles-history` and `a/post-merge-notes` are deleted (remote and local);
+  everything in them was already on `main`. Simrit's `d/simrit` is merged into `main` (her branch is left in place).
 - There is an **untracked folder `frontend 2/`** in the repo root (someone's earlier generated incident-report dashboard,
   with `node_modules` inside). It is not part of this build: never `git add -A`; stage files by name.
 
@@ -57,7 +57,7 @@ Legend: [x] done and tested · [~] partly · [ ] not started · [D]/[B]/[C] wait
       signed event in every 2xx body, `observed` plumbing, roles + `auth_mode`, push hand-off after commit
 - [x] `POST /v1/reports/{id}/resolve` (supervisor, 409 guards) and `GET /v1/review` with full receipts
 - [x] `GET /v1/reports/{id}/history` with `sig_status` and `carried`
-- [x] `/v1/status` v1.1 (peers `acked`/`last_ok_ms`, computed `risk`, nullable `queues`/`carry`)
+- [x] `/v1/status` v1.1 served by Simrit's `region/sync/status.py` builder (peers `acked`/`last_ok_ms`, `risk`, `queues` P0/P1/P2, `carry`); my duplicate risk code was removed in the merge
 - [x] CORS explicit origin list, body-size bound, startup key provisioning
 - [x] Tests T7, T10, T16 (A part), A9, 403/409/422 paths: `tests/api/` (see section 5)
 - [ ] Partner HTTP adapter with cache and fallback + T13 (tier 2-c; interface, contract and mock already exist)
@@ -77,7 +77,7 @@ Legend: [x] done and tested · [~] partly · [ ] not started · [D]/[B]/[C] wait
 ### Waiting on other lanes
 - Now ON `main` (Lane C's merge): `engine/signing.py`, policy v1 + op_id rule + CLOSE_VS_NEW_INFO in `derive`, `sync/carry.py` (`/healthz`, `/v1/carry`, `/v1/events/has`), `scripts/chaos_agent.py`, fixtures.
 - [B] `priority.classify` (I reuse Lane D's `classify_priority` through one call in `writes._priority`)
-- [D] ingest that fails closed on unsigned events (strict xfail test flags it), levels CONSTRAINED/RECOVERING, queues in the snapshot
+- [D] ingest that fails closed on unsigned events (strict xfail test flags it). Levels CONSTRAINED/RECOVERING and queues in the snapshot are now on `main` (Simrit's merge)
 
 ## 5. How to run and test
 
@@ -111,9 +111,7 @@ unsigned foreign events; remove it when ingest fails closed.
 Start them: `.\.venv\Scripts\python.exe scripts/run_regions.py mum pun del` (backend) and `cd web; npm install; npm run dev` (frontend).
 Dev keys: `dev-officer` is the only key `run_one.py` provisions (see section 7).
 
-**Live mode today:** the SDK falls back to `/v1/health` because `/healthz` is Lane D's. Until Lane D adds `/healthz`, `/v1/carry`,
-`/v1/events/has` (and the chaos agent on :9000), live mode shows nodes, carts, replication and the API view, but failover,
-"present on survivors", Crash/Restart and Tamper need those endpoints (the UI says so instead of faking it). Mock mode shows all of it.
+**Live mode:** the real nodes now serve `/healthz`, `/v1/carry` and `/v1/events/has` (merged `carry.py`), so live mode can probe, fail over and show "present on survivors". Crash/Restart and the demo shop's chaos buttons still need Lane C's chaos agent on :9000; the UI says so instead of faking it. Restart the regions after pulling so they run the merged code. Mock mode shows everything.
 
 ## 6. Design decisions worth knowing
 
@@ -138,8 +136,8 @@ Dev keys: `dev-officer` is the only key `run_one.py` provisions (see section 7).
 - **Simrit, ingest fails open:** `region/sync/ingest.py` verifies only events whose `sig` is not null and silently skips
   verification when `region.trust.signing` is missing, so stripping `sig` bypasses it. Foreign events must carry a valid
   `sig` once signing is on (quarantine `unsigned`). My xfail test flips when this is fixed.
-- **Simrit, carry/healthz/has:** now on `main` (written in Lane C's merge). Contract in `contracts/contracts.md` 3.2.
-- **Simrit, keys:** `scripts/run_one.py` only provisions `dev-officer`. Add `dev-supervisor` and `dev-admin`
+- **Simrit, carry/healthz/has:** merged into ONE `region/sync/carry.py`. Kept from her: `ENABLE_CARRY=0` kill switch (503 `carry_disabled`), quarantine of every rejected carried event, `get_carry_metrics`/`reset_carry_metrics`. Kept from the signed version: unknown origin, bad hash and bad/missing signature are rejected (her copy accepted unsigned events whenever no key registry was found), the own-origin guard, ingest path, `mark_carried`, and 422 for more than 200 events (her copy silently dropped the rest). `/healthz` recomputes the level at most once a second. Her lane D tests were adjusted accordingly (carry a real signed event; known origin for the bad-hash case).
+- **Simrit, keys:** `scripts/run_one.py` (now with her empty-DB guard and pid files, plus key provisioning for every region) only provisions `dev-officer`. Add `dev-supervisor` and `dev-admin`
   (`key:actor:role`) so the supervisor/resolve and admin paths can be demoed live.
 - **Rahil:** `engine/signing.py` and policy v1 are on `main`. When `derive` changes again, run `python scripts/gen_fixtures.py` and commit the fixtures.
 - **Miti:** `dashboard/` is replaced by `web/` (plan section 7). Chaos agent contract: `POST :9000/crash/{region}`,
@@ -164,4 +162,7 @@ Dev keys: `dev-officer` is the only key `run_one.py` provisions (see section 7).
   3. Partner HTTP adapter with cache and fallback (T13, tier 2-c) against Simrit's `scripts/mock_partner.py`; negative tests T10 (done at ingest) and T13.
   4. README API samples with curl (`docs/api.md`).
   5. Trial-and-Reward hardening on `main` (oversize input and error bodies are done; write-queue 503 is tier 2-b, needs Lane D's knobs).
-  6. Waiting on others, then re-verify: Lane D `/healthz`, `/v1/carry`, `/v1/events/has`, ingest that fails closed on unsigned events (flip the xfail), levels CONSTRAINED/RECOVERING; Lane B policy v1 + op_id rule + CLOSE_VS_NEW_INFO in the real `derive`; Lane C chaos agent on :9000.
+  6. Waiting on others, then re-verify: ingest that fails closed on unsigned events (flip the xfail); Lane C chaos agent on :9000 for live Crash/Restart; Lane B's newer branch `lane-B-main-build` (check its Claude co-author trailers first, see the last log entry). `/healthz`, `/v1/carry`, `/v1/events/has`, ladder levels, policy v1 and the op_id rule are already on `main`.
+
+- 2026-10-12 (merge to main) — Pushed `main` and `a/akshit-main` (both `121b1ec`), merged Simrit's `d/simrit` (6 conflicts, resolved as described in section 7), deleted the old Lane A branches. Whole repo `pytest tests` = 285 passed, 1 xfailed (stable on two runs, includes Simrit's multi-process lane D tests); web `tsc` clean, 56 tests. All Akshit commits carry only his identity, no trailers.
+  **Finding for the team:** commit `8a07981` (Rahil, already on `main`) and five commits on `origin/lane-B-main-build` (`4270664 caf935f 808a342 2b7d8e0 4d964b2`) carry a `Co-Authored-By: Claude` trailer. Not rewritten here (it is shared history); needs a team decision before `lane-B-main-build` is merged.
