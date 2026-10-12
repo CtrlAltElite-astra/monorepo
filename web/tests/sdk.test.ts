@@ -163,6 +163,15 @@ describe('backpressure, carry support and the outbox limits', () => {
     expect(client.getState().counters.errors).toBe(0)
   })
 
+  it('a node with no /healthz is probed through /v1/health instead of being called down', async () => {
+    vi.useFakeTimers()
+    const t = new Stub((_r, _m, p) => p === '/healthz' ? okRes(404, null) : p === '/v1/health' ? okRes(200, { ok: true }) : okRes(404, null))
+    const client = new SyncShieldClient(t)
+    await client.probeOnce()
+    expect(client.getState().regions.every((r) => r.up)).toBe(true)
+    expect(t.log).toContain('mum GET /v1/health')
+  })
+
   it('a node without /v1/carry is reported, and requests still go through', async () => {
     vi.useFakeTimers()
     let mumDead = false

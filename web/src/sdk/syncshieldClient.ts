@@ -137,7 +137,9 @@ export class SyncShieldClient {
     await Promise.all(this.t.regions.map(async ({ id }) => {
       const h = this.health.get(id)!
       try {
-        const res = await this.t.request<{ ok: boolean; level: Level }>(id, 'GET', '/healthz', { timeoutMs: this.opts.probeTimeoutMs })
+        let res = await this.t.request<{ ok: boolean; level: Level }>(id, 'GET', '/healthz', { timeoutMs: this.opts.probeTimeoutMs })
+        // a node that has no /healthz yet still answers /v1/health: use it rather than calling a live node down
+        if (res.status === 404) res = await this.t.request<{ ok: boolean; level: Level }>(id, 'GET', '/v1/health', { timeoutMs: this.opts.probeTimeoutMs })
         if (res.status === 200 && res.body?.ok) {
           h.up = true; h.goodProbes++; h.level = res.body.level ?? null; h.probedAt = Date.now()
           h.samples = [...h.samples.slice(-4), res.ms]; h.ms = median(h.samples)

@@ -75,7 +75,9 @@ export function fmtClock(iso: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-export const rupees = (n: number) => '₹' + n.toLocaleString('en-IN')
+export const plural = (n: number, one: string, many = one + 's') => `${n} ${n === 1 ? one : many}`
+
+export const rupees =(n: number) => '₹' + n.toLocaleString('en-IN')
 
 export function groupBy<T, K extends string>(items: T[], key: (t: T) => K): Record<K, T[]> {
   const out = {} as Record<K, T[]>

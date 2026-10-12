@@ -5,8 +5,7 @@ import { handle, SimChaos, SimTransport } from '../sim/api'
 import { SimWorld, type SimOptions } from '../sim/world'
 import type { RegionId } from './types'
 
-export interface MockApi { world: SimWorld; transport: SimTransport; chaos: SimSimChaos }
-type SimSimChaos = SimChaos
+export interface MockApi { world: SimWorld; transport: SimTransport; chaos: SimChaos }
 
 const HOME: Record<string, RegionId> = { Alice: 'mum', Bob: 'pun', Chitra: 'del', Dev: 'mum', Esha: 'pun' }
 const BASKET: Record<string, string[]> = {
@@ -33,6 +32,6 @@ export function createMock(opts: SimOptions & { seeded?: boolean } = {}): MockAp
   const { seeded = true, ...simOpts } = opts
   const world = new SimWorld(simOpts)
   if (seeded) seed(world)
-  world.start()
+  // the world's clock is started by whoever owns it (the demo's effect), so StrictMode double-mounts cannot leak timers
   return { world, transport: new SimTransport(world), chaos: new SimChaos(world) }
 }
