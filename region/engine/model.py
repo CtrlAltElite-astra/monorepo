@@ -8,7 +8,7 @@ observed, priority and sig the same way.
 from datetime import datetime, timezone
 
 from contracts.schemas import validate_field
-from region.engine import canonical, digest, hlc, policy, priority, signing
+from region.engine import admit, canonical, digest, hlc, policy, priority, signing
 from region.engine.derive import derive, well_formed
 
 
@@ -38,6 +38,19 @@ class Replica:
 
     def views(self) -> dict:
         return {rid: self.view(rid) for rid in sorted({e["report_id"] for e in self.events.values()})}
+
+    def heads(self) -> dict:
+        """{origin: n} where this node holds seq 1..n of that origin: the gap-safe watermark."""
+        seqs = {}
+        for e in self.events.values():
+            seqs.setdefault(e["origin"], set()).add(e["seq"])
+        out = {}
+        for origin, held in seqs.items():
+            n = 0
+            while n + 1 in held:
+                n += 1
+            out[origin] = n
+        return out
 
     def event_digest(self) -> str:
         return digest.event_digest((i, e["hash"]) for i, e in self.events.items())
@@ -82,15 +95,15 @@ class Replica:
         """Events from a peer or from a browser's outbox, checked the way ingest checks them.
 
         Skipped: a malformed event, a hash that does not match, an id already held. With
-        public_keys (the rule for /v1/carry) an event must also carry its origin's signature.
-        Returns the ids that were new.
+        public_keys (the rule for /v1/carry, admit.reject_reason) an event must also carry its
+        origin's signature. Returns the ids that were new.
         """
         new = []
         for ev in events:
-            if not well_formed(ev) or ev["event_id"] in self.events or canonical.event_hash(ev) != ev.get("hash"):
-                continue
-            if public_keys is not None and not signing.verify_with(
-                    public_keys.get(ev["origin"], ""), ev["hash"], ev.get("sig")):
+            if public_keys is not None:
+                if admit.reject_reason(ev, public_keys) or ev["event_id"] in self.events:
+                    continue
+            elif not well_formed(ev) or ev["event_id"] in self.events or canonical.event_hash(ev) != ev.get("hash"):
                 continue
             self.events[ev["event_id"]] = ev
             self.clock = hlc.receive(self.clock, tuple(ev["hlc"]), now_ms)
