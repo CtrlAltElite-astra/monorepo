@@ -98,7 +98,7 @@ describe('partition, conflict, review and resolve (A4, A5, T4, T6, T7)', () => {
     expect(a.conflicts).toEqual(b.conflicts)
     expect(a.state).toMatchObject({ severity: 5, assigned_team: 'Bhiwandi', status: 'closed' })
     expect(a.conflicts.map((c: any) => c.field).sort()).toEqual(['assigned_team', 'severity', 'status'].filter((f) => f !== 'status').concat('status'))
-    expect(a.conflicts.find((c: any) => c.field === 'status')).toMatchObject({ relationship: 'CLOSE_VS_NEW_INFO' })
+    expect(a.conflicts.find((c: any) => c.field === 'status')).toMatchObject({ rule: 'CLOSE_VS_NEW_INFO', flags: ['CLOSE_VS_NEW_INFO'] })
     expect(a.conflicts.find((c: any) => c.field === 'assigned_team').flags).toEqual(['DOUBLE_DISPATCH'])
   })
 
@@ -138,9 +138,9 @@ describe('partition, conflict, review and resolve (A4, A5, T4, T6, T7)', () => {
     cut(world, 'mum', 'pun', 'up')
     await advance(4000)
     const [item] = handle(world, 'pun', 'GET', '/v1/review', undefined, null).body
-    expect(item.receipt.relationship).toBe('CLOSE_VS_NEW_INFO')
+    expect(item.receipt.rule).toBe('CLOSE_VS_NEW_INFO')
     expect(report(world, 'pun').state.status).toBe('closed')
-    const closeId = item.receipt.candidates.find((c: any) => c.kind === 'close').event_id
+    const closeId = item.receipt.candidates[0].event_id // the close is listed first
     expect(supervisor(world, 'pun', 'POST', `/v1/reports/${CART}/resolve`, { field: 'status', value: 'closed', candidates: [closeId], reason: 'ship with the new item' }).status).toBe(201)
     expect(handle(world, 'pun', 'GET', '/v1/review', undefined, null).body).toEqual([])
   })
