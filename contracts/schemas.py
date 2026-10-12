@@ -14,7 +14,7 @@ FIELDS = [
     "severity", "status", "assigned_team", "people_estimate",
 ]
 
-CATEGORIES = ("flood", "collapse", "medical", "fire", "road_block", "shelter", "other")
+CATEGORIES = ("flood", "collapse", "medical", "fire", "road_block", "shelter", "other", "cart")  # "cart": shop skin (v1.1)
 STATUSES = ("open", "assigned", "resolved", "closed", "cancelled")
 
 PRIORITY_CRITICAL, PRIORITY_NORMAL, PRIORITY_BULK = 0, 1, 2
@@ -41,6 +41,18 @@ EVENT_REQUIRED = (
     "event_id", "origin", "seq", "report_id", "type", "supersedes",
     "hlc", "hash", "value",
 )
+# Contract v1.1 (additive, nullable): every NEW event carries these; older events and fixtures lack them.
+EVENT_OPTIONAL_KEYS = ("op_id", "observed", "role", "auth_mode")
+
+AUTH_MODES = ("online", "cached", "stale")
+
+# Client-generated report ids (shop carts): "R-" + 8 lowercase hex. Without one the server makes R-<region>-<seq>.
+CLIENT_REPORT_ID_PATTERN = r"^R-[0-9a-f]{8}$"
+OP_ID_MAX = 64
+
+# Bounds shared by every lane (contracts.md 3.3).
+MAX_TITLE, MAX_DESCRIPTION, MAX_NOTE, MAX_REASON = 120, 2000, 2000, 500
+MAX_SUPERSEDES, MAX_SYNC_PAGE, MAX_CARRY, MAX_HAS, MAX_BODY_BYTES = 16, 200, 200, 500, 512 * 1024
 
 
 def validate_field(field: str, value):
