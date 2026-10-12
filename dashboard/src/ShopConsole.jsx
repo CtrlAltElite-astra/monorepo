@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { API_KEY, FIXTURES, REGIONS, crashRegion, setPairLink, startRegion } from './api.js'
+import { API_KEY, AUTH_ENABLED, FIXTURES, REGIONS, crashRegion, setPairLink, startRegion } from './api.js'
 import { SyncShieldClient } from './sdk/syncshieldClient.js'
+import { useAuth } from './auth/AuthContext.jsx'
+import AuthPanel from './auth/AuthPanel.jsx'
 import Badge from './components/Badge.jsx'
 import { ProveIt, TamperPanel } from './components/ProofTools.jsx'
 import {
@@ -59,14 +61,25 @@ export default function ShopConsole({ snaps, onRefresh }) {
   const creating = useRef({})           // shopper -> in-flight create promise
   const [view, setView] = useState(null)
   const [proof, setProof] = useState(null)
-  const [shopper, setShopper] = useState(SHOPPERS[0])
+  const auth = useAuth()
+  const [shopperState, setShopperState] = useState(SHOPPERS[0])
+  // Auth mode: the shopper IS the signed-in active persona (a real session), never a free choice of label.
+  const shopper = AUTH_ENABLED ? (auth.active ?? '') : shopperState
+  const setShopper = AUTH_ENABLED ? auth.setActive : setShopperState
+  const shopperNames = AUTH_ENABLED ? auth.names : SHOPPERS
   const [notice, setNotice] = useState('')
   const [bot, setBot] = useState(false)
   const [busy, setBusy] = useState('')
 
   useEffect(() => {
     if (FIXTURES) return undefined
-    const sdk = new SyncShieldClient(REGIONS, { apiKey: API_KEY })
+    const sdk = new SyncShieldClient(REGIONS, {
+      apiKey: API_KEY,
+      // auth mode: bearer sessions only, chosen per call (persona); no API key is ever sent
+      getAuthHeader: AUTH_ENABLED
+        ? (persona) => { const t = auth.tokenFor(persona); return t ? { Authorization: `Bearer ${t}` } : {} }
+        : null,
+    })
     sdkRef.current = sdk
     const off = sdk.subscribe(setView)
     sdk.start()
@@ -91,14 +104,26 @@ export default function ShopConsole({ snaps, onRefresh }) {
     return null
   }
 
+  // Auth mode: ask the region for THIS persona's own carts (the list is already filtered by the server).
+  async function ownCartId(owner) {
+    const r = await sdk.call('GET', '/v1/reports', undefined, { persona: owner })
+    if (!r.ok || !Array.isArray(r.body)) return null
+    const mine = r.body.find((x) => x.state && x.state.title === owner)
+    return mine ? mine.report_id : null
+  }
+
   async function ensureCart(owner) {
+    if (AUTH_ENABLED && !cartIds.current[owner]) {
+      const found = await ownCartId(owner)
+      if (found) cartIds.current[owner] = found
+    }
     const known = knownCartId(owner)
     if (known) return known
     if (!creating.current[owner]) {
       // client-chosen report id + op_id: a retried create (failover) is applied once
       creating.current[owner] = sdk.call('POST', '/v1/reports', {
         title: owner, category: CART_CATEGORY, severity: 1, report_id: newReportId(), op_id: newOpId(),
-      })
+      }, { persona: owner })
         .then((r) => {
           const id = r.body?.report?.report_id
           if (r.ok && id) cartIds.current[owner] = id
@@ -114,7 +139,11 @@ export default function ShopConsole({ snaps, onRefresh }) {
     const id = await ensureCart(owner)
     if (!id) { setNotice('Could not create the cart on any node. Saved on this device and will retry.'); return }
     const op = newOpId()
-    await sdk.call('POST', `/v1/reports/${id}/notes`, { text: addItemText({ sku, owner, op }), op_id: op })
+    const out = await sdk.call('POST', `/v1/reports/${id}/notes`, { text: addItemText({ sku, owner, op }), op_id: op }, { persona: owner })
+    if (!out.ok) {
+      // a permanent answer (401 / 403 / 404): shown as what it is, never counted as a successful add
+      setNotice(`${owner}: could not add the item (${out.body?.detail?.code || out.body?.detail || `HTTP ${out.status || 'no node answered'}`}).`)
+    }
     onRefresh()
   }
 
@@ -123,7 +152,7 @@ export default function ShopConsole({ snaps, onRefresh }) {
     if (!next || !sdk) return
     const r = await sdk.call('PATCH', `/v1/reports/${cart.id}`, {
       field: 'status', value: next, expected: cart.live?.status,
-    })
+    }, { persona: shopper })
     if (r.status === 409) setNotice('The cart changed on another node while you were looking. It was refreshed: check it and try again.')
     else if (!r.ok) setNotice(`Could not update the cart (HTTP ${r.status || 'no node answered'}).`)
     else setNotice('')
@@ -134,7 +163,10 @@ export default function ShopConsole({ snaps, onRefresh }) {
   useEffect(() => {
     if (!bot || !sdk) return undefined
     const t = setInterval(() => {
-      const who = SHOPPERS[Math.floor(Math.random() * SHOPPERS.length)]
+      // auth mode: only members who really hold a session shop (no bypass for the bot)
+      const pool = AUTH_ENABLED ? auth.live.filter((s) => s.role === 'officer').map((s) => s.persona) : SHOPPERS
+      if (!pool.length) return
+      const who = pool[Math.floor(Math.random() * pool.length)]
       const p = PRODUCTS[Math.floor(Math.random() * PRODUCTS.length)]
       addToCart(who, p.sku)
     }, 1200)
@@ -143,7 +175,10 @@ export default function ShopConsole({ snaps, onRefresh }) {
 
   const act = async (label, fn) => {
     setBusy(label)
-    try { await fn() } catch (e) { setNotice(`${label} failed: ${e.message}${e.status === 401 ? ' (check VITE_ADMIN_KEY)' : ''}`) }
+    try { await fn() } catch (e) {
+      const hint = e.status === 401 ? (AUTH_ENABLED ? ' (set the chaos agent key under "Judge tools")' : ' (check VITE_ADMIN_KEY)') : ''
+      setNotice(`${label} failed: ${e.message}${hint}`)
+    }
     setBusy('')
     onRefresh()
     sdk && sdk.probeAll()
@@ -169,6 +204,7 @@ export default function ShopConsole({ snaps, onRefresh }) {
   return (
     <div className="shop">
       {notice && <div className="banner warn" onClick={() => setNotice('')}>{notice} <span className="muted">(click to dismiss)</span></div>}
+      <AuthPanel />
 
       <div className="shop-grid">
         {/* ---------- storefront ---------- */}
@@ -177,7 +213,7 @@ export default function ShopConsole({ snaps, onRefresh }) {
           <div className="row-gap">
             <label>Shopper&nbsp;
               <select value={shopper} onChange={(e) => setShopper(e.target.value)}>
-                {SHOPPERS.map((s) => <option key={s}>{s}</option>)}
+                {shopperNames.map((s) => <option key={s}>{s}</option>)}
               </select>
             </label>
             <label className="check"><input type="checkbox" checked={bot} onChange={(e) => setBot(e.target.checked)} /> auto-shoppers</label>
