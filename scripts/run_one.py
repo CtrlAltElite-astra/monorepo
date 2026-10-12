@@ -1,6 +1,6 @@
 """Run ONE region in the foreground.   python scripts/run_one.py pun
 
-Region table: mum :8001, pun :8002, del :8003. Peers = the other regions in
+Region table: mum :8001, pun :8002, del :8003, blr :8004 (Bengaluru, not started by default). Peers = the other regions in
 REGIONS (env, default "mum,pun"; set REGIONS=mum,pun,del in Phase 3).
 Always one uvicorn worker (sequence numbers are guarded by an in-process lock).
 """
@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PORTS = {"mum": 8001, "pun": 8002, "del": 8003}
+PORTS = {"mum": 8001, "pun": 8002, "del": 8003, "blr": 8004}
+SHOPPERS = ("alice", "bob", "chitra", "dev", "esha")
 
 
 def region_env(region: str, regions: list) -> dict:
@@ -22,7 +23,8 @@ def region_env(region: str, regions: list) -> dict:
         PEERS=",".join(f"{r}=http://127.0.0.1:{PORTS[r]}" for r in regions if r != region),
         PEER_TOKEN=os.environ.get("PEER_TOKEN", "change-me"),
         API_KEYS=",".join((f"dev-officer:officer-{region}-1:officer", f"dev-supervisor:supervisor-{region}-1:supervisor",
-                           f"dev-admin:admin-{region}-1:admin")),  # the web console's live mode uses all three
+                           f"dev-admin:admin-{region}-1:admin",    # the web console's live mode uses these three
+                           *(f"dev-{s}:{s}:officer" for s in SHOPPERS))),  # one key per shopper: a per-shopper limit sees one actor each
         PYTHONPATH=str(ROOT),
     )
     # Opt-in TRUE credential sessions: AUTH_ENABLED=true python scripts/run_one.py mum
