@@ -93,30 +93,15 @@ def get_queue_counts() -> dict[str, int]:
 
 
 def classify_priority(ev: dict) -> int:
-    """Classify event priority: 0 (critical), 1 (normal), 2 (bulk) per PDF 2 6.9."""
-    if "priority" in ev and ev["priority"] in (0, 1, 2) and ev["priority"] != 1:
-        return ev["priority"]
-    ev_type = ev.get("type")
-    if ev_type == "NOTE":
-        return 2
-    if ev_type == "RESOLVE":
-        return 0
-    if ev_type == "CREATE":
-        val = ev.get("value", {})
-        if isinstance(val, dict):
-            if val.get("severity", 0) >= 4 or val.get("category") in ("collapse", "medical", "fire"):
-                return 0
-        return 1
-    if ev_type == "SET":
-        field = ev.get("field")
-        val = ev.get("value")
-        if field == "severity" and isinstance(val, (int, float)) and val >= 4:
-            return 0
-        if field == "assigned_team" and val:
-            return 0
-        if field == "status" and val in ("resolved", "closed", "cancelled"):
-            return 0
-    return 1
+    """Lane of an event: 0 (critical), 1 (normal), 2 (bulk), plan 4.2 and 6.9.
+
+    The write path stores engine.priority.classify on every event; the queue sends by that stored value.
+    An event that carries none (written before priorities existed) is classified by the same engine rule."""
+    p = ev.get("priority")
+    if isinstance(p, int) and not isinstance(p, bool) and p in (0, 1, 2):
+        return p
+    from region.engine.priority import classify
+    return classify(ev)
 
 
 def enqueue_for_peer(peer: str, ev: dict) -> None:

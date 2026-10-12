@@ -74,9 +74,11 @@ Applied only when the live values of a field disagree. Writes that saw the old v
 | people_estimate | highest, never summed | yes |
 | notes (cart activity) | union by event id; one `op_id` is one write | n/a |
 | close vs new information | status stays as derived; `CLOSE_VS_NEW_INFO` review item | yes |
+| two supervisor decisions that differ | the field's rule again, flag `RESOLVE_VS_RESOLVE` | yes |
 
-Full rules and receipt shape: [contracts/contracts.md](contracts/contracts.md#6-v11-additions-implemented-additive).
-*(Rahil: add one line of reasoning per rule in `docs/conflict-policy.md`.)*
+One line of reasoning per rule, the receipt shape and the accepted-event rule (shape, known origin,
+unchanged hash, the origin's Ed25519 signature) are in [docs/conflict-policy.md](docs/conflict-policy.md).
+Full contract: [contracts/contracts.md](contracts/contracts.md#6-v11-additions-implemented-additive).
 <!-- END:policy -->
 
 <!-- BEGIN:demo owner=C -->
@@ -157,14 +159,28 @@ Writes accept an optional `op_id` (or `Idempotency-Key` header): the same operat
 ## Tests and how to run them
 
 ```bash
-pytest tests/engine        # pure engine: hash, HLC, derive, digests
+pytest tests/engine        # pure engine: hash, HLC, derive and policy v1, signing, carry admission, priority
+pytest tests/failover      # T17 zero-loss failover (in memory, and kill -9 on real processes) + T18 carry integrity
+pytest tests/fuzz          # F1: three nodes, random writes, retries, partitions, tampering
 pytest tests/shop          # shop fixtures (carts, split-brain, close-vs-new-info, op_id retry)
 pytest tests/integration   # real node processes: replicate, restart, partition, heal, relay
 pytest                     # everything
 bash scripts/check_m1.sh   # curl evidence script (needs jq, nodes running)
+python scripts/prove_it.py --chaos 3 --wait 20   # live: cut / write on both sides / heal, ends CONVERGED (exit 0)
 ```
 
-*(Rahil and Simrit: add the T16-T22 results, scenario scripts, and the fuzz result with the real run count.)*
+Lane B results on the merged `main` (Windows laptop, Python 3.14; numbers from the runs, not estimates):
+
+- **T17 zero-loss failover on real processes** (`tests/failover/test_t17_live.py`): Mumbai is killed with
+  `kill -9` while holding 3 adds no peer has; the browser carries them to Pune; every acknowledged event is
+  present on the survivor (`/v1/events/has` missing = []); 0 errors; Mumbai restarts and both converge with
+  no duplicate items. Kill to first success on Pune: 52 to 61 ms over 4 runs. (T20 asks for p95 over 10
+  runs; not measured yet.)
+- **T18 carry integrity, T16 engine half, T1, T2, T4, T5, T6** and one test per policy rule: pass.
+- **F1 fuzz:** 211 examples on 3 nodes, 5 480 writes, 1 839 retries under the same `op_id`, 361 tampered
+  deliveries rejected, no divergence (`tests/fuzz/last_result.json`).
+
+*(Simrit: add the T19-T22 results and scenario scripts.)*
 <!-- END:tests -->
 
 <!-- BEGIN:convergence owner=A+D -->

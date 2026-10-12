@@ -13,6 +13,10 @@ Env: SIGNING_KEYS_DIR, PUBLIC_KEYS_FILE override the locations (tests use this).
 
 Behaviour when nothing is provisioned: `sign()` returns None (events stay unsigned) and
 `verify()`/`has_key()` are False, so carry stays disabled instead of trusting an unsigned event.
+
+generate / public_of / sign_with / verify_with are the same operations with the key passed in, for
+callers that hold keys themselves: the in-memory nodes of the engine model, the F1 fuzz test and the
+T17 harness.
 """
 import base64
 import json
@@ -104,6 +108,34 @@ def verify(origin: str, hash_hex: str, sig_b64: Optional[str]) -> bool:
         return False
 
 
+
+# ---- pure: the caller supplies the key --------------------------------------
+def generate() -> tuple:
+    """A new key pair: (private, public), each the base64 of 32 raw bytes."""
+    key = Ed25519PrivateKey.generate()
+    raw = key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+    return _b64(raw), _b64(_raw_public(key))
+
+
+def public_of(private_b64: str) -> str:
+    """The public key that belongs to a private key."""
+    return _b64(_raw_public(Ed25519PrivateKey.from_private_bytes(base64.b64decode(private_b64))))
+
+
+def sign_with(private_b64: str, hash_hex: str) -> str:
+    """Signature over one event hash. Ed25519 is deterministic: same key and hash, same signature."""
+    return _b64(Ed25519PrivateKey.from_private_bytes(base64.b64decode(private_b64)).sign(hash_hex.encode("ascii")))
+
+
+def verify_with(public_b64, hash_hex, sig_b64) -> bool:
+    """True only when sig was made over hash_hex by the owner of public_b64. Never raises."""
+    try:
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(public_b64, validate=True)).verify(
+            base64.b64decode(sig_b64, validate=True), hash_hex.encode("ascii"))
+        return True
+    except (InvalidSignature, ValueError, TypeError, AttributeError):
+        return False
+
 @contextmanager
 def _registry_lock(path: Path, timeout_s: float = 8.0):
     """Cross-process lock around the registry read-modify-write. Three regions that start together must not
@@ -115,7 +147,7 @@ def _registry_lock(path: Path, timeout_s: float = 8.0):
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             break
-        except FileExistsError:
+        except (FileExistsError, PermissionError):  # Windows: PermissionError while another holder deletes it
             try:
                 if time.time() - lock.stat().st_mtime > 10:  # left behind by a crashed holder
                     lock.unlink(missing_ok=True)

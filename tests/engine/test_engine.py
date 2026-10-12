@@ -148,11 +148,11 @@ def test_write_that_saw_only_one_value_keeps_the_conflict():
 
 
 def test_equal_hlc_breaks_ties_by_origin_then_seq():
-    m = mk("mum", 2, "SET", "severity", 5, supersedes=["mum:1"], hlc_=(2000, 0))
-    p = mk("pun", 1, "SET", "severity", 4, supersedes=["mum:1"], hlc_=(2000, 0))
+    m = mk("mum", 2, "SET", "title", "from mum", supersedes=["mum:1"], hlc_=(2000, 0))
+    p = mk("pun", 1, "SET", "title", "from pun", supersedes=["mum:1"], hlc_=(2000, 0))
     for evs in ([CREATE, m, p], [p, m, CREATE]):
         v = derive(evs)
-        assert v["live"]["severity"] == ["mum:2", "pun:1"] and v["state"]["severity"] == 5  # policy v1: highest
+        assert v["live"]["title"] == ["mum:2", "pun:1"] and v["state"]["title"] == "from pun"  # title: latest wins
 
 
 def test_equal_concurrent_values_are_not_a_conflict():

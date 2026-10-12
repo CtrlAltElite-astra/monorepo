@@ -1,8 +1,8 @@
-"""The frozen fixtures agree with the engine (owner: Rahil).
+"""The fixtures agree with the engine (owner: Rahil).
 
-Lanes C and D build against contracts/fixtures/*. If the engine and a fixture
-drift apart this fails here, not on the dashboard. Regenerate the fixtures with
-python scripts/gen_fixtures.py.
+Lanes C and D build against contracts/fixtures/* and fixtures/events_*.json. If
+the engine and a fixture drift apart this fails here, not on a screen. Regenerate
+with python scripts/gen_fixtures.py (tests/shop checks fixtures/events_*.json).
 """
 import json
 from pathlib import Path
@@ -28,3 +28,4 @@ def test_report_fixture_is_what_derive_returns():
     report = load("report.json")
     for key in ("state", "live", "conflicts", "incomplete"):
         assert view[key] == report[key], key
+

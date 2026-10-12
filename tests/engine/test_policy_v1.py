@@ -173,6 +173,90 @@ def test_events_without_observed_never_trigger_it():
     assert derive([CREATE, close, note])["conflicts"] == []
 
 
+
+# ---- cases ported from Lane B's policy tests (merge of lane-b-rahil) ----------------------
+def test_assign_against_unassign_needs_review_but_is_not_double_dispatch():
+    a = mk("mum", 2, "SET", "assigned_team", "Bhiwandi", ["mum:1"], t=10)
+    b = mk("pun", 1, "SET", "assigned_team", None, ["mum:1"], t=11)
+    c = conflict(derive([CREATE, a, b]), "assigned_team")
+    assert c["needs_review"] is True and c["flags"] == []
+
+
+def test_two_supervisors_deciding_the_same_is_not_a_conflict():
+    m = mk("mum", 2, "RESOLVE", "title", "Alice", ["mum:1"], t=10)
+    p = mk("pun", 1, "RESOLVE", "title", "Alice", ["mum:1"], t=11)
+    assert derive([CREATE, m, p])["conflicts"] == []
+
+
+def test_two_supervisors_deciding_differently_is_reviewed_again_even_for_low_stakes_fields():
+    for field, a, b in (("title", "Alice", "Alice S"), ("severity", 2, 5), ("status", "closed", "assigned")):
+        m = mk("mum", 2, "RESOLVE", field, a, ["mum:1"], t=10)
+        p = mk("pun", 1, "RESOLVE", field, b, ["mum:1"], t=11)
+        c = conflict(derive([CREATE, m, p]), field)
+        assert c["needs_review"] is True and "RESOLVE_VS_RESOLVE" in c["flags"], field
+
+
+def test_a_decision_against_an_ordinary_edit_keeps_the_field_rule():
+    m = mk("mum", 2, "RESOLVE", "title", "Alice", ["mum:1"], t=10)
+    p = mk("pun", 1, "SET", "title", "Alice S", ["mum:1"], t=11)
+    c = conflict(derive([CREATE, m, p]), "title")
+    assert c["needs_review"] is False and c["flags"] == []
+
+
+def test_cancel_is_a_close_and_paid_is_not():
+    note = mk("pun", 1, "NOTE", value={"text": "gift card"}, t=12, observed=["mum:1"])
+    cancel = mk("mum", 2, "SET", "status", "cancelled", ["mum:1"], t=10, observed=["mum:1"])
+    paid = mk("mum", 2, "SET", "status", "resolved", ["mum:1"], t=10, observed=["mum:1"])
+    assert conflict(derive([CREATE, cancel, note]), "status", "CLOSE_VS_NEW_INFO") is not None
+    assert derive([CREATE, paid, note])["conflicts"] == []
+
+
+def test_a_smaller_upgrade_is_not_new_information():
+    close = mk("mum", 2, "SET", "status", "closed", ["mum:1"], t=10, observed=["mum:1"])
+    up = mk("pun", 1, "SET", "severity", 3, ["mum:1"], t=12, observed=["mum:1"])
+    assert derive([CREATE, close, up])["conflicts"] == []
+
+
+def test_a_supervisor_who_saw_the_item_settles_it_and_a_later_unseen_item_reopens_it():
+    close = mk("mum", 2, "SET", "status", "closed", ["mum:1"], t=10, observed=["mum:1"])
+    note = mk("pun", 1, "NOTE", value={"text": "gift card"}, t=12, observed=["mum:1"])
+    keep = mk("mum", 3, "RESOLVE", "status", "closed", ["mum:2"], t=20, observed=["mum:1", "pun:1"])
+    assert derive([CREATE, close, note, keep])["conflicts"] == []
+    late = mk("del", 1, "NOTE", value={"text": "earbuds"}, t=21, observed=["mum:2"])  # saw the old close only
+    c = conflict(derive([CREATE, close, note, keep, late]), "status", "CLOSE_VS_NEW_INFO")
+    assert c is not None and c["event_ids"] == ["mum:3", "del:1"]
+
+
+
+def test_a_review_item_shows_the_status_every_node_shows_even_when_status_is_also_in_conflict():
+    close = mk("mum", 2, "SET", "status", "closed", ["mum:1"], t=10, observed=["mum:1"])
+    reopen = mk("pun", 1, "SET", "status", "open", ["mum:1"], t=11)
+    note = mk("pun", 2, "NOTE", value={"text": "gift card"}, t=12, observed=["mum:1"])
+    v = derive([CREATE, close, reopen, note])
+    assert v["state"]["status"] == "open"  # most active wins the field conflict
+    assert conflict(v, "status", "STATUS_MOST_ACTIVE")["provisional"] == "open"
+    assert conflict(v, "status", "CLOSE_VS_NEW_INFO")["provisional"] == "open"  # not the close's own value
+
+JUNK = [None, 3, "mum:1", [], {"event_id": "mum:9"}, {"event_id": 7, "value": {}},
+        dict(CREATE, hlc=[1, 2, 3]), dict(CREATE, supersedes="mum:0"), dict(CREATE, event_id="mum:8", value="x"),
+        {**CREATE, "event_id": "mum:7", "type": "NOTE", "value": {"text": 5}}]
+
+
+def test_malformed_events_are_ignored_never_fatal():
+    want = canonical.dumps(derive([CREATE]))
+    for junk in JUNK:
+        assert canonical.dumps(derive([CREATE, junk])) == want, junk
+
+
+def test_rules_cope_with_values_nobody_validated():
+    odd = [mk("mum", 2, "SET", "status", ["closed"], ["mum:1"], t=10, observed="mum:1"),
+           mk("pun", 1, "SET", "status", "open", ["mum:1"], t=11),
+           mk("mum", 3, "SET", "location", {"lat_e6": "x"}, ["mum:1"], t=12),
+           mk("pun", 2, "SET", "location", {"lat_e6": 19_000_000, "lon_e6": 72_000_000}, ["mum:1"], t=13),
+           mk("mum", 4, "NOTE", value={"text": "x"}, t=14, op=["not", "a", "string"], observed=7)]
+    v = derive([CREATE] + odd)
+    assert {c["field"] for c in v["conflicts"]} == {"status", "location"}
+
 # ---- convergence -------------------------------------------------------------
 def test_v1_is_order_and_duplicate_independent():
     evs = [

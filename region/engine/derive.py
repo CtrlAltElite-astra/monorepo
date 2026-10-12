@@ -13,6 +13,8 @@ Policy v1 (plan v1.1 section 6.6), applied only when the live values of a field 
     location                       latest; review if candidates >= 200 m apart
     people_estimate                highest, never summed                 review
     notes                          union by event id
+    RESOLVE vs RESOLVE             two supervisor decisions with different values: the field rule
+                                   again, always reviewed, flag RESOLVE_VS_RESOLVE
 
 Plus two rules that are not per-field:
 
@@ -22,6 +24,9 @@ Plus two rules that are not per-field:
     CLOSE_VS_NEW_INFO   a live close (closed / cancelled) and a NOTE or severity >= 4 write that did
                         not observe each other raise a review item; status stays as derived.
                         Events without `observed` (older nodes) never trigger it.
+
+derive() is total: an event without the shape it relies on is ignored, the same way on every node,
+so one malformed event can never make derive() raise and block the reports around it.
 """
 import math
 
@@ -41,6 +46,25 @@ def order(e: dict):
     return (e["hlc"][0], e["hlc"][1], e["origin"], e["seq"])
 
 
+def _int(x) -> bool:
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
+def well_formed(e) -> bool:
+    """True when e has the shape derive() relies on. Anything else is ignored, identically everywhere."""
+    if not isinstance(e, dict) or "value" not in e:
+        return False
+    hlc, sup, kind, value = e.get("hlc"), e.get("supersedes"), e.get("type"), e["value"]
+    return (
+        isinstance(e.get("event_id"), str) and isinstance(e.get("origin"), str) and _int(e.get("seq"))
+        and isinstance(hlc, (list, tuple)) and len(hlc) == 2 and all(_int(x) for x in hlc)
+        and isinstance(sup, (list, tuple)) and all(isinstance(x, str) for x in sup)
+        and (kind != "CREATE" or isinstance(value, dict))
+        and (kind not in ("SET", "RESOLVE") or isinstance(e.get("field"), str))
+        and (kind != "NOTE" or (isinstance(value, dict) and isinstance(value.get("text"), str)))
+    )
+
+
 def _fval(e: dict, f: str):
     """Value of field f in e: a CREATE carries all initial fields, a SET/RESOLVE one."""
     return e["value"][f] if e["type"] == "CREATE" else e["value"]
@@ -52,7 +76,7 @@ def _op_groups(evs: list) -> dict:
     by_op: dict = {}
     for e in evs:
         op = e.get("op_id")
-        if op:
+        if isinstance(op, str) and op:
             by_op.setdefault(op, []).append(e["event_id"])
     out = {}
     for ids in by_op.values():
@@ -85,6 +109,10 @@ def _metres(a: dict, b: dict) -> float:
     return 2 * 6371000.0 * math.asin(min(1.0, math.sqrt(h)))
 
 
+def _is_point(v) -> bool:
+    return isinstance(v, dict) and _int(v.get("lat_e6")) and _int(v.get("lon_e6"))
+
+
 def _num(v):
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) else float("-inf")
 
@@ -98,7 +126,7 @@ def _resolve(f: str, live: list):
     if f == "severity":
         return max(live, key=lambda e: (_num(vals[e["event_id"]]), order(e))), "HIGHEST", False, []
     if f == "status":
-        rank = lambda e: LADDER.get(vals[e["event_id"]], 99)  # noqa: E731
+        rank = lambda e: LADDER.get(vals[e["event_id"]], 99) if isinstance(vals[e["event_id"]], str) else 99  # noqa: E731
         lowest = min(rank(e) for e in live)
         return [e for e in live if rank(e) == lowest][-1], "STATUS_MOST_ACTIVE", True, []
     if f == "assigned_team":
@@ -106,7 +134,7 @@ def _resolve(f: str, live: list):
         flags = ["DOUBLE_DISPATCH"] if len(teams) > 1 else []
         return live[0], "EARLIEST_HLC", True, flags
     if f == "location":
-        pts = [v for v in vals.values() if isinstance(v, dict)]
+        pts = [v for v in vals.values() if _is_point(v)]
         far = any(_metres(a, b) >= FAR_METRES for i, a in enumerate(pts) for b in pts[i + 1:])
         return live[-1], "LATEST_HLC", far, (["FAR_APART"] if far else [])
     if f == "people_estimate":
@@ -119,14 +147,16 @@ def _candidate(e: dict, f: str) -> dict:
             "actor": e.get("actor"), "wall": e.get("wall")}
 
 
-def _close_vs_new_info(evs: list, live_status: list, groups: dict) -> list:
+def _close_vs_new_info(evs: list, live_status: list, groups: dict, shown) -> list:
     """One review item per live close that did not observe a note / big upgrade (and vice versa).
 
-    The item lists the close first, then every unseen change, so a supervisor decides once."""
+    The item lists the close first, then every unseen change, so a supervisor decides once. Its
+    provisional value is the status every node shows (`shown`): the status stays as derived, which
+    is not the close's own value when the status field is itself in conflict."""
     out = []
-    closes = [e for e in live_status if _fval(e, "status") in CLOSED and e.get("observed") is not None]
+    closes = [e for e in live_status if _fval(e, "status") in CLOSED and isinstance(e.get("observed"), list)]
     infos = [e for e in evs
-             if e.get("observed") is not None
+             if isinstance(e.get("observed"), list)
              and (e["type"] == "NOTE"
                   or (e["type"] == "SET" and e["field"] == "severity" and _num(e["value"]) >= 4))]
     for c in sorted(closes, key=order):
@@ -149,7 +179,7 @@ def _close_vs_new_info(evs: list, live_status: list, groups: dict) -> list:
             "event_ids": [c["event_id"]] + [i["event_id"] for i in unseen],
             "rule": "CLOSE_VS_NEW_INFO",
             "policy_version": POLICY_VERSION,
-            "provisional": _fval(c, "status"),
+            "provisional": shown,
             "needs_review": True,
             "flags": ["CLOSE_VS_NEW_INFO"],
         })
@@ -174,7 +204,7 @@ def derive(events) -> dict:
     "values", "event_ids" (same order as candidates), "rule", "policy_version", "provisional",
     "needs_review", "flags"}. `values` and `event_ids` are kept for older readers.
     """
-    evs = list({e["event_id"]: e for e in events}.values())
+    evs = list({e["event_id"]: e for e in events if well_formed(e)}.values())
     groups = _op_groups(evs)
     view = {
         "state": {},
@@ -205,6 +235,9 @@ def derive(events) -> dict:
             view["state"][f] = _fval(live[0], f)   # concurrent but equal: not a conflict
             continue
         winner, rule, review, flags = _resolve(f, live)
+        decided = {canonical.dumps(_fval(e, f)) for e in live if e["type"] == "RESOLVE"}
+        if len(decided) > 1:  # two supervisors decided differently: neither may silently win
+            review, flags = True, flags + ["RESOLVE_VS_RESOLVE"]
         view["state"][f] = _fval(winner, f)
         view["conflicts"].append({
             "field": f,
@@ -219,7 +252,7 @@ def derive(events) -> dict:
             "flags": flags,
         })
 
-    view["conflicts"].extend(_close_vs_new_info(evs, live_status, groups))
+    view["conflicts"].extend(_close_vs_new_info(evs, live_status, groups, view["state"].get("status")))
 
     notes = _one_per_group(sorted((e for e in evs if e["type"] == "NOTE"), key=order), groups)
     view["state"]["notes"] = [{"id": e["event_id"], "text": e["value"]["text"]} for e in notes]

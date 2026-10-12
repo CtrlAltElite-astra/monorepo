@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from region import config, store
-from region.engine import canonical, hlc, signing
+from region.engine import canonical, hlc, priority, signing
 from region.engine.derive import CLOSED, derive
 
 
@@ -62,11 +62,11 @@ def _wall() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
-def _priority(ev: dict) -> int:
-    """0 critical / 1 normal / 2 bulk (plan 4.2). One classifier for the whole system: Lane D's push queue
-    already uses this one. Lane B's engine.priority.classify can replace this single call when it lands."""
-    from region.sync.push import classify_priority
-    return classify_priority(ev)
+def _priority(conn, ev: dict) -> int:
+    """0 critical / 1 normal / 2 bulk (plan 4.2): engine.priority.classify on the report as it was before
+    this write, stored on the event. The push queue sends by the stored value."""
+    before = derive(store.events_for(conn, ev["report_id"])) if ev["type"] != "CREATE" else None
+    return priority.classify(ev, before)
 
 
 def _observed(conn, report_id: str, type_: str, field: Optional[str], value) -> Optional[list]:
@@ -111,7 +111,7 @@ def _append(conn, *, report_id, type_, field, value, actor, role, auth_mode, op_
                   credential_id=provenance.get("credential_id"))
         if type_ == "CREATE":
             ev["owner"] = actor   # immutable cart owner, replicated through the signed event log
-    ev["priority"] = _priority(ev)
+    ev["priority"] = _priority(conn, ev)
     ev["hash"] = canonical.event_hash(ev)
     ev["sig"] = signing.sign(region, ev["hash"])  # None when no key is provisioned: carry then refuses the event
     store.insert_event(conn, ev)
