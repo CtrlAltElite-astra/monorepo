@@ -1,18 +1,22 @@
 """The plan's numbered gate tests that Lane B owns (owner: Rahil). Plan section 10.
 
 T1 runs the real store and ingest on a temp database; the others are pure.
+T4 and T6 replay the worked example of plan 10.1 on in-memory nodes.
 """
 import itertools
 import os
+import runpy
+from pathlib import Path
 
 os.environ.setdefault("ENV_FILE", "none")  # never read a developer's .env
 
 from region import store  # noqa: E402
 from region.engine import canonical, digest  # noqa: E402
 from region.engine.derive import derive  # noqa: E402
-from region.engine.model import make_event as mk  # noqa: E402
+from region.engine.model import Replica, make_event as mk  # noqa: E402
 from region.sync import ingest  # noqa: E402
 
+SHOP = runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "gen_shop_fixtures.py"))
 NEW_CART = {"title": "Alice", "description": "", "category": "cart", "severity": 1, "status": "open",
             "assigned_team": None, "location": None, "people_estimate": None}
 
@@ -65,3 +69,54 @@ def test_t5_changes_to_different_fields_both_survive_without_conflict():
     faster = mk("pun", 1, "SET", "severity", 3, ["mum:1"], hlc=(2001, 0))
     v = derive([cart, faster, paid])
     assert v["state"]["status"] == "resolved" and v["state"]["severity"] == 3 and v["conflicts"] == []
+
+
+def test_t4_split_brain_outcomes_are_the_same_on_both_nodes():
+    """T4: the table of plan 10.1, after both nodes wrote Alice's cart while cut off."""
+    mum, pun, rid = SHOP["split_brain"]()
+    assert canonical.dumps(mum.view(rid)) == canonical.dumps(pun.view(rid))
+    assert (mum.state_hash(), mum.event_digest()) == (pun.state_hash(), pun.event_digest())
+    view = mum.view(rid)
+    receipt = {c["field"]: c for c in view["conflicts"]}
+    assert list(receipt) == ["severity", "status", "assigned_team"]
+    # delivery speed: Mumbai 5, Pune 4 -> the highest, receipt only
+    assert view["state"]["severity"] == 5
+    assert (receipt["severity"]["rule"], receipt["severity"]["needs_review"]) == ("SEVERITY_HIGHEST", False)
+    # fulfilment centre: Bhiwandi was first -> kept, flagged, reviewed
+    assert view["state"]["assigned_team"] == "Bhiwandi"
+    assert (receipt["assigned_team"]["flags"], receipt["assigned_team"]["needs_review"]) == (["DOUBLE_DISPATCH"], True)
+    # status: only Mumbai changed it, so no field conflict, but the order did not see Pune's writes
+    assert view["state"]["status"] == "closed" and receipt["status"]["event_ids"] == ["mum:4"]
+    assert (receipt["status"]["rule"], receipt["status"]["needs_review"]) == ("CLOSE_VS_NEW_INFO", True)
+    assert [(n["kind"], n["event_id"]) for n in receipt["status"]["new_info"]] == [("SEVERITY", "pun:2"), ("NOTE", "pun:3")]
+    # cart activity: Pune's gift card is visible on Mumbai
+    assert len(view["state"]["notes"]) == 1 and "Gift card" in view["state"]["notes"][0]["text"]
+
+
+def test_t6_resolve_replaces_exactly_its_candidates_and_a_write_that_missed_it_reopens_review():
+    """T6: a supervisor decides, the decision replicates, and an edit that never saw it is not hidden."""
+    mum, pun, rid = SHOP["split_brain"]()
+    delhi, t = Replica("del"), SHOP["T0"] + 100_000
+    delhi.receive([pun.events["mum:1"], pun.events["pun:1"]], t)  # Delhi only ever got the cart and Pune's centre
+
+    candidates = mum.view(rid)["live"]["assigned_team"]
+    decision = mum.write(t + 1_000, "RESOLVE", rid, "assigned_team", "Chakan", reason="Chakan has the stock")
+    assert decision["supersedes"] == candidates == ["mum:2", "pun:1"] and decision["priority"] == 0
+    view = mum.view(rid)
+    assert view["state"]["assigned_team"] == "Chakan" and view["live"]["assigned_team"] == ["mum:5"]
+    assert [c["field"] for c in view["conflicts"]] == ["severity", "status"]  # the other items are untouched
+
+    late = delhi.write(t + 5_000, "SET", rid, "assigned_team", "Gurgaon")  # written without the decision
+    assert late["supersedes"] == ["pun:1"]
+    SHOP["heal"](mum, pun, delhi, at=t + 9_000)
+    for node in (mum, pun, delhi):
+        (again,) = [c for c in node.view(rid)["conflicts"] if c["field"] == "assigned_team"]
+        assert again["event_ids"] == ["mum:5", "del:1"] and again["provisional"] == "Chakan"  # the earlier of the two
+        assert again["needs_review"] is True and again["flags"] == ["DOUBLE_DISPATCH"]
+
+    final = pun.write(t + 20_000, "RESOLVE", rid, "assigned_team", "Gurgaon", reason="Delhi already shipped")
+    assert final["supersedes"] == ["mum:5", "del:1"]
+    SHOP["heal"](mum, pun, delhi, at=t + 30_000)
+    assert len({n.state_hash() for n in (mum, pun, delhi)}) == 1
+    assert mum.view(rid)["state"]["assigned_team"] == "Gurgaon"
+    assert "assigned_team" not in [c["field"] for c in mum.view(rid)["conflicts"]]

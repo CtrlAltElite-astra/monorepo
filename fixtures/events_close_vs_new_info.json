@@ -1,0 +1,207 @@
+{
+  "about": "Chitra's order was placed on Mumbai while Pune added a yoga mat. The status stays 'closed' and a supervisor must decide.",
+  "events": [
+    {
+      "v": 1,
+      "event_id": "mum:1",
+      "origin": "mum",
+      "seq": 1,
+      "report_id": "R-c417a003",
+      "type": "CREATE",
+      "field": null,
+      "value": {
+        "title": "Chitra",
+        "description": "",
+        "category": "cart",
+        "severity": 1,
+        "status": "open",
+        "assigned_team": null,
+        "location": null,
+        "people_estimate": null
+      },
+      "supersedes": [],
+      "hlc": [
+        1791813000000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "chitra-1",
+      "actor": "agent-mum-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:00+00:00",
+      "sig": null,
+      "hash": "a0435435d01a8999b3a448279816b5b85009da6511ca58aa7ce8948a9d4aa4b2"
+    },
+    {
+      "v": 1,
+      "event_id": "mum:2",
+      "origin": "mum",
+      "seq": 2,
+      "report_id": "R-c417a003",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"KURTA-01\",\"name\":\"Cotton kurta\",\"qty\":1,\"price\":899,\"user\":\"Chitra\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1791813005000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "chitra-2",
+      "actor": "agent-mum-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:05+00:00",
+      "sig": null,
+      "observed": [
+        "mum:1"
+      ],
+      "hash": "7cee4f3bef05a0cca9562ca7f11af1dba5d1791272d0784c47c2ba37ce4feeb8"
+    },
+    {
+      "v": 1,
+      "event_id": "mum:3",
+      "origin": "mum",
+      "seq": 3,
+      "report_id": "R-c417a003",
+      "type": "SET",
+      "field": "status",
+      "value": "closed",
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1791813020000,
+        0
+      ],
+      "priority": 0,
+      "op_id": "chitra-3",
+      "actor": "agent-mum-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:20+00:00",
+      "sig": null,
+      "observed": [
+        "mum:2",
+        "mum:1"
+      ],
+      "hash": "17faab5991ca3e188c69be45ba1909a819b5ab3d9784dd1f3f632e96e1ab26db"
+    },
+    {
+      "v": 1,
+      "event_id": "pun:1",
+      "origin": "pun",
+      "seq": 1,
+      "report_id": "R-c417a003",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"MAT-01\",\"name\":\"Yoga mat\",\"qty\":1,\"price\":799,\"user\":\"Chitra\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1791813021000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "chitra-4",
+      "actor": "agent-pun-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:21+00:00",
+      "sig": null,
+      "observed": [
+        "mum:1"
+      ],
+      "hash": "c06c692a630de06d40fdc18bc358813585fe66ee88ca9c22079c57d1e9704533"
+    }
+  ],
+  "report": {
+    "report_id": "R-c417a003",
+    "state": {
+      "title": "Chitra",
+      "description": "",
+      "category": "cart",
+      "location": null,
+      "severity": 1,
+      "status": "closed",
+      "assigned_team": null,
+      "people_estimate": null,
+      "notes": [
+        {
+          "id": "mum:2",
+          "text": "{\"kind\":\"ADD\",\"sku\":\"KURTA-01\",\"name\":\"Cotton kurta\",\"qty\":1,\"price\":899,\"user\":\"Chitra\"}"
+        },
+        {
+          "id": "pun:1",
+          "text": "{\"kind\":\"ADD\",\"sku\":\"MAT-01\",\"name\":\"Yoga mat\",\"qty\":1,\"price\":799,\"user\":\"Chitra\"}"
+        }
+      ]
+    },
+    "live": {
+      "title": [
+        "mum:1"
+      ],
+      "description": [
+        "mum:1"
+      ],
+      "category": [
+        "mum:1"
+      ],
+      "location": [
+        "mum:1"
+      ],
+      "severity": [
+        "mum:1"
+      ],
+      "status": [
+        "mum:3"
+      ],
+      "assigned_team": [
+        "mum:1"
+      ],
+      "people_estimate": [
+        "mum:1"
+      ]
+    },
+    "conflicts": [
+      {
+        "field": "status",
+        "relationship": "CONCURRENT",
+        "candidates": [
+          {
+            "event_id": "mum:3",
+            "value": "closed",
+            "origin": "mum",
+            "actor": "agent-mum-1",
+            "wall": "2026-10-12T13:50:20+00:00"
+          }
+        ],
+        "rule": "CLOSE_VS_NEW_INFO",
+        "policy_version": 1,
+        "provisional": "closed",
+        "needs_review": true,
+        "flags": [
+          "CLOSE_VS_NEW_INFO"
+        ],
+        "values": [
+          "closed"
+        ],
+        "event_ids": [
+          "mum:3"
+        ],
+        "new_info": [
+          {
+            "event_id": "pun:1",
+            "kind": "NOTE",
+            "value": "{\"kind\":\"ADD\",\"sku\":\"MAT-01\",\"name\":\"Yoga mat\",\"qty\":1,\"price\":799,\"user\":\"Chitra\"}",
+            "origin": "pun",
+            "actor": "agent-pun-1",
+            "wall": "2026-10-12T13:50:21+00:00"
+          }
+        ]
+      }
+    ],
+    "incomplete": false,
+    "policy_version": 1
+  }
+}

@@ -47,6 +47,22 @@ def _highest(values: list):
     return max(numbers) if numbers else values[-1]
 
 
+def observed_for(type_: str, field, value, view):
+    """What a new write lists in its `observed` key (None: this kind of write carries none).
+
+    Placing or cancelling an order lists the cart activity and the delivery speed its node
+    had. A cart-activity note or a delivery-speed write lists the status its node had.
+    derive() compares the lists to notice an order placed without seeing a new item.
+    view: the report's view BEFORE the write.
+    """
+    state, live = (view or {}).get("state", {}), (view or {}).get("live", {})
+    if type_ in ("SET", "RESOLVE") and field == "status" and value in CLOSE_STATUSES:
+        return [n["id"] for n in state.get("notes", [])] + list(live.get("severity", []))
+    if type_ == "NOTE" or (type_ in ("SET", "RESOLVE") and field == "severity"):
+        return list(live.get("status", []))
+    return None
+
+
 @dataclass(frozen=True)
 class Policy:
     """The rule set. Every node runs POLICY_V1; the fields record the team decisions D1-D3."""

@@ -1,0 +1,355 @@
+{
+  "about": "Plan 10.1. Both nodes wrote Alice's cart while cut off. Delivery speed takes the highest (receipt only). Two fulfilment centres is a double dispatch (review). The order placed on Mumbai did not see Pune's gift card or its Same-day upgrade (CLOSE_VS_NEW_INFO, review).",
+  "events": [
+    {
+      "v": 1,
+      "event_id": "mum:1",
+      "origin": "mum",
+      "seq": 1,
+      "report_id": "R-a11ce001",
+      "type": "CREATE",
+      "field": null,
+      "value": {
+        "title": "Alice",
+        "description": "",
+        "category": "cart",
+        "severity": 1,
+        "status": "open",
+        "assigned_team": null,
+        "location": null,
+        "people_estimate": null
+      },
+      "supersedes": [],
+      "hlc": [
+        1791813000000,
+        0
+      ],
+      "priority": 1,
+      "op_id": "alice-1",
+      "actor": "agent-mum-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:00+00:00",
+      "sig": null,
+      "hash": "43893e5ee577625faa8b2085566078903d5b290828616d03a8e325691a8b290d"
+    },
+    {
+      "v": 1,
+      "event_id": "mum:2",
+      "origin": "mum",
+      "seq": 2,
+      "report_id": "R-a11ce001",
+      "type": "SET",
+      "field": "assigned_team",
+      "value": "Bhiwandi",
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1791813010000,
+        0
+      ],
+      "priority": 0,
+      "op_id": "alice-2",
+      "actor": "agent-mum-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:10+00:00",
+      "sig": null,
+      "hash": "078ec310b515ef73f5de0eb0f1e5f51dc9658a573807d9b4c088d656f67c798a"
+    },
+    {
+      "v": 1,
+      "event_id": "pun:1",
+      "origin": "pun",
+      "seq": 1,
+      "report_id": "R-a11ce001",
+      "type": "SET",
+      "field": "assigned_team",
+      "value": "Chakan",
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1791813011000,
+        0
+      ],
+      "priority": 0,
+      "op_id": "ops-pun-1",
+      "actor": "agent-pun-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:11+00:00",
+      "sig": null,
+      "hash": "9f8250c01beb259868baa7561552928e8c89c13630b2fd4f59d5b4e753e40b96"
+    },
+    {
+      "v": 1,
+      "event_id": "mum:3",
+      "origin": "mum",
+      "seq": 3,
+      "report_id": "R-a11ce001",
+      "type": "SET",
+      "field": "severity",
+      "value": 5,
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1791813020000,
+        0
+      ],
+      "priority": 0,
+      "op_id": "alice-3",
+      "actor": "agent-mum-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:20+00:00",
+      "sig": null,
+      "observed": [
+        "mum:1"
+      ],
+      "hash": "b1f28d286dd2ea490b1279379779c5dc1bfa2c693a216d306c6ef7226f008b1c"
+    },
+    {
+      "v": 1,
+      "event_id": "pun:2",
+      "origin": "pun",
+      "seq": 2,
+      "report_id": "R-a11ce001",
+      "type": "SET",
+      "field": "severity",
+      "value": 4,
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1791813021000,
+        0
+      ],
+      "priority": 0,
+      "op_id": "ops-pun-2",
+      "actor": "agent-pun-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:21+00:00",
+      "sig": null,
+      "observed": [
+        "mum:1"
+      ],
+      "hash": "d8429b620be52c711558d4660b9d197db5a986f63f30f3f458f709c7436a40ad"
+    },
+    {
+      "v": 1,
+      "event_id": "mum:4",
+      "origin": "mum",
+      "seq": 4,
+      "report_id": "R-a11ce001",
+      "type": "SET",
+      "field": "status",
+      "value": "closed",
+      "supersedes": [
+        "mum:1"
+      ],
+      "hlc": [
+        1791813030000,
+        0
+      ],
+      "priority": 0,
+      "op_id": "alice-4",
+      "actor": "agent-mum-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:30+00:00",
+      "sig": null,
+      "observed": [
+        "mum:3"
+      ],
+      "hash": "b6a528e829507e090a7d5533be68474a7c7394c65233dd611105b9b6659a2d02"
+    },
+    {
+      "v": 1,
+      "event_id": "pun:3",
+      "origin": "pun",
+      "seq": 3,
+      "report_id": "R-a11ce001",
+      "type": "NOTE",
+      "field": null,
+      "value": {
+        "text": "{\"kind\":\"ADD\",\"sku\":\"GIFT-500\",\"name\":\"Gift card\",\"qty\":1,\"price\":500,\"user\":\"Alice\"}"
+      },
+      "supersedes": [],
+      "hlc": [
+        1791813031000,
+        0
+      ],
+      "priority": 2,
+      "op_id": "alice-5",
+      "actor": "agent-pun-1",
+      "reason": null,
+      "wall": "2026-10-12T13:50:31+00:00",
+      "sig": null,
+      "observed": [
+        "mum:1"
+      ],
+      "hash": "0f78c1090438c53a90163cd4d806ddb6c570fd37afa13c545eda2f47711c8f9f"
+    }
+  ],
+  "report": {
+    "report_id": "R-a11ce001",
+    "state": {
+      "title": "Alice",
+      "description": "",
+      "category": "cart",
+      "location": null,
+      "severity": 5,
+      "status": "closed",
+      "assigned_team": "Bhiwandi",
+      "people_estimate": null,
+      "notes": [
+        {
+          "id": "pun:3",
+          "text": "{\"kind\":\"ADD\",\"sku\":\"GIFT-500\",\"name\":\"Gift card\",\"qty\":1,\"price\":500,\"user\":\"Alice\"}"
+        }
+      ]
+    },
+    "live": {
+      "title": [
+        "mum:1"
+      ],
+      "description": [
+        "mum:1"
+      ],
+      "category": [
+        "mum:1"
+      ],
+      "location": [
+        "mum:1"
+      ],
+      "severity": [
+        "mum:3",
+        "pun:2"
+      ],
+      "status": [
+        "mum:4"
+      ],
+      "assigned_team": [
+        "mum:2",
+        "pun:1"
+      ],
+      "people_estimate": [
+        "mum:1"
+      ]
+    },
+    "conflicts": [
+      {
+        "field": "severity",
+        "relationship": "CONCURRENT",
+        "candidates": [
+          {
+            "event_id": "mum:3",
+            "value": 5,
+            "origin": "mum",
+            "actor": "agent-mum-1",
+            "wall": "2026-10-12T13:50:20+00:00"
+          },
+          {
+            "event_id": "pun:2",
+            "value": 4,
+            "origin": "pun",
+            "actor": "agent-pun-1",
+            "wall": "2026-10-12T13:50:21+00:00"
+          }
+        ],
+        "rule": "SEVERITY_HIGHEST",
+        "policy_version": 1,
+        "provisional": 5,
+        "needs_review": false,
+        "flags": [],
+        "values": [
+          5,
+          4
+        ],
+        "event_ids": [
+          "mum:3",
+          "pun:2"
+        ]
+      },
+      {
+        "field": "status",
+        "relationship": "CONCURRENT",
+        "candidates": [
+          {
+            "event_id": "mum:4",
+            "value": "closed",
+            "origin": "mum",
+            "actor": "agent-mum-1",
+            "wall": "2026-10-12T13:50:30+00:00"
+          }
+        ],
+        "rule": "CLOSE_VS_NEW_INFO",
+        "policy_version": 1,
+        "provisional": "closed",
+        "needs_review": true,
+        "flags": [
+          "CLOSE_VS_NEW_INFO"
+        ],
+        "values": [
+          "closed"
+        ],
+        "event_ids": [
+          "mum:4"
+        ],
+        "new_info": [
+          {
+            "event_id": "pun:2",
+            "kind": "SEVERITY",
+            "value": 4,
+            "origin": "pun",
+            "actor": "agent-pun-1",
+            "wall": "2026-10-12T13:50:21+00:00"
+          },
+          {
+            "event_id": "pun:3",
+            "kind": "NOTE",
+            "value": "{\"kind\":\"ADD\",\"sku\":\"GIFT-500\",\"name\":\"Gift card\",\"qty\":1,\"price\":500,\"user\":\"Alice\"}",
+            "origin": "pun",
+            "actor": "agent-pun-1",
+            "wall": "2026-10-12T13:50:31+00:00"
+          }
+        ]
+      },
+      {
+        "field": "assigned_team",
+        "relationship": "CONCURRENT",
+        "candidates": [
+          {
+            "event_id": "mum:2",
+            "value": "Bhiwandi",
+            "origin": "mum",
+            "actor": "agent-mum-1",
+            "wall": "2026-10-12T13:50:10+00:00"
+          },
+          {
+            "event_id": "pun:1",
+            "value": "Chakan",
+            "origin": "pun",
+            "actor": "agent-pun-1",
+            "wall": "2026-10-12T13:50:11+00:00"
+          }
+        ],
+        "rule": "TEAM_EARLIEST",
+        "policy_version": 1,
+        "provisional": "Bhiwandi",
+        "needs_review": true,
+        "flags": [
+          "DOUBLE_DISPATCH"
+        ],
+        "values": [
+          "Bhiwandi",
+          "Chakan"
+        ],
+        "event_ids": [
+          "mum:2",
+          "pun:1"
+        ]
+      }
+    ],
+    "incomplete": false,
+    "policy_version": 1
+  }
+}
