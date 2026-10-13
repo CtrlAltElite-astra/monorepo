@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from contracts import schemas
 from region import config, store
-from region.api import routes_reports, routes_review, routes_status, writes
+from region.api import ratelimit, routes_reports, routes_review, routes_status, writes
 from region.engine import signing
 from region.sync import carry, client, routes_admin, routes_sync
 from region.trust import true_hook
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
         store.close()
 
 
-app = FastAPI(title=f"SyncShield region {config.settings.region}", version="1.1", lifespan=lifespan)
+app = FastAPI(title=f"SyncShield region {config.settings.region}", version="1.2", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -53,10 +53,17 @@ async def limit_body(request: Request, call_next):
     return await call_next(request)
 
 
+@app.exception_handler(ratelimit.RateLimited)
+async def rate_limited(request: Request, exc: ratelimit.RateLimited):
+    """Contract v1.2 (8.3): the actor has no tokens left. Raised by the write path, so nothing was stored."""
+    return JSONResponse(status_code=429, content=ratelimit.refusal_body(exc.decision),
+                        headers=ratelimit.headers(exc.decision))
+
+
 app.add_middleware(  # added last = outermost, so even the 422 above carries CORS headers
     CORSMiddleware, allow_origins=cors_origins(), allow_methods=["*"],
     allow_headers=["X-Api-Key", "Authorization", "Content-Type", "Idempotency-Key", "X-Admin-Key"],
-    expose_headers=["Idempotent-Replay", "Retry-After"],
+    expose_headers=["Idempotent-Replay", "Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
 )
 app.include_router(routes_reports.router)
 app.include_router(routes_review.router)

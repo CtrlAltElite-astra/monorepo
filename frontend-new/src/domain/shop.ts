@@ -1,8 +1,12 @@
 // The shop adapter (plan section 4): the backend stays domain neutral, so only this file speaks "shop".
 // Engine field -> shop label. The UI renders what the API returns; it never recomputes status, priority or conflicts.
-import type { ReportView } from '../api/types'
+import type { RegionId, ReportView } from '../api/types'
 
-export interface Product { sku: string; name: string; price: number; hue: number; glyph: string }
+export interface Product {
+  sku: string; name: string; price: number; hue: number; glyph: string
+  /** a claim the buyer must have proven (contract 8.5, "age_over_18"); the write path answers 403 claim_required until then */
+  requires?: string
+}
 
 /** Appendix B seed data: synthetic products only. */
 export const PRODUCTS: Product[] = [
@@ -20,6 +24,19 @@ export const PRODUCTS: Product[] = [
 
 export const SHOPPERS = ['Alice', 'Bob', 'Chitra', 'Dev', 'Esha'] as const
 export type Shopper = (typeof SHOPPERS)[number]
+
+/** Each shopper's home region: where their requests go first (master plan H2). The fixed failover order is the fallback. */
+export const HOME_REGION: Record<Shopper, RegionId> = { Alice: 'mum', Bob: 'mum', Chitra: 'pun', Dev: 'pun', Esha: 'del' }
+
+/** An item for adults only. It is NOT in PRODUCTS (auto-shoppers and the seed never pick it) and it is hidden unless the flag is on:
+ *  the claim check that refuses it belongs to the identity lane and joins in the dependent plan (J4). */
+export const RESTRICTED_PRODUCT: Product = { sku: 'BEER-01', name: 'Craft beer sampler', price: 1299, hue: 38, glyph: 'cup', requires: 'age_over_18' }
+export function restrictedProductEnabled(): boolean {
+  try {
+    if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('restricted') === '1') return true
+  } catch { /* no URL to read */ }
+  return (import.meta.env.VITE_RESTRICTED_PRODUCT as string | undefined) === '1'
+}
 
 export const SPEEDS: Record<number, string> = { 1: 'Standard', 2: 'Plus', 3: 'Express', 4: 'Same-day', 5: 'Priority' }
 export const CENTRES = ['Bhiwandi', 'Chakan', 'Gurgaon'] as const
@@ -59,10 +76,10 @@ export const FLAG_TEXT: Record<string, string> = {
 
 export interface CartItem { sku: string; name: string; qty: number; price: number; user: string | null; noteIds: string[] }
 
-export interface AddNote { kind: 'ADD'; sku: string; name: string; qty: number; price: number; user: string }
+export interface AddNote { kind: 'ADD'; sku: string; name: string; qty: number; price: number; user: string; requires?: string }
 
 export const addNoteText = (p: Product, user: string, qty = 1): string =>
-  JSON.stringify({ kind: 'ADD', sku: p.sku, name: p.name, qty, price: p.price, user } satisfies AddNote)
+  JSON.stringify({ kind: 'ADD', sku: p.sku, name: p.name, qty, price: p.price, user, ...(p.requires ? { requires: p.requires } : {}) } satisfies AddNote)
 
 export function parseNote(text: string): AddNote | null {
   try {

@@ -39,9 +39,9 @@ export function ReplBadge({ value, stale, compact }: { value: string; stale?: bo
   )
 }
 
-const NODE_COLOR: Record<string, string> = { mum: 'var(--node-mum)', pun: 'var(--node-pun)', del: 'var(--node-del)' }
+const NODE_COLOR: Record<string, string> = { mum: 'var(--node-mum)', pun: 'var(--node-pun)', del: 'var(--node-del)', blr: 'var(--node-blr)' }
 export const nodeColor = (id: string | null | undefined) => (id ? NODE_COLOR[id] ?? 'var(--muted)' : 'var(--muted)')
-export const NODE_NAME: Record<string, string> = { mum: 'Mumbai', pun: 'Pune', del: 'Delhi' }
+export const NODE_NAME: Record<string, string> = { mum: 'Mumbai', pun: 'Pune', del: 'Delhi', blr: 'Bengaluru' }
 
 export function NodeDot({ id, size = 10 }: { id: RegionId | string | null; size?: number }) {
   return <span className="node-dot" style={{ background: nodeColor(id), width: size, height: size }} />

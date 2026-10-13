@@ -7,7 +7,7 @@
   --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
   --dur: .22s; --dur-slow: .5s;
 
-  --node-mum: #2f6fde; --node-pun: #7c5ce0; --node-del: #d6409f;
+  --node-mum: #2f6fde; --node-pun: #7c5ce0; --node-del: #d6409f; --node-blr: #0f9d8a;
 }
 
 :root[data-theme="light"] {

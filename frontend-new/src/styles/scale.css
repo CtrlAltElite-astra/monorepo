@@ -1,0 +1,100 @@
+/* Scaling and limits (master plan lane A): the shopper's "requests left" meter, the calm rate notice, the writes-per-second bar and
+   power dial on each region card, the add-a-region card, the Limits section, the load bar and the Scaling tab.
+   Type: nothing below 13.5 px, like the rest of the console. Colour: amber for "slow down" (a calm answer), red only for real failure. */
+
+/* ---- a shopper's own allowance ---------------------------------------------------------------------------------------------- */
+.sp-shoppers button { align-content: start; }
+.sp-meter { display: grid; justify-items: center; gap: 4px; width: 100%; padding-inline: 4px; }
+.sp-meter-bar { display: block; width: 100%; height: 5px; border-radius: 5px; background: #e3e3dd; overflow: hidden; }
+.sp-meter-bar i { display: block; height: 100%; border-radius: 5px; background: var(--cx-green); transition: width .35s cubic-bezier(.2, .8, .2, 1), background .3s; }
+.sp-meter small { font-size: 13.5px; font-weight: 650; line-height: 1; color: var(--cx-mute); white-space: nowrap; }
+.sp-meter--low .sp-meter-bar i { background: var(--cx-amber); }
+.sp-meter--empty .sp-meter-bar i { background: var(--cx-red); }
+.sp-meter--empty small { color: var(--cx-red-ink); }
+
+/* a refusal is an answer: amber and calm, no red, nothing lost */
+.sp-rate-note { display: flex; align-items: flex-start; gap: 10px; margin: -6px 0 18px; padding: 12px 14px; border: 1.5px solid var(--cx-amber-line); border-radius: 14px; background: var(--cx-amber-bg); color: var(--cx-amber-ink); font-size: 14.5px; line-height: 1.45; animation: cx-rise .35s both; }
+.sp-rate-note svg { flex: none; margin-top: 2px; }
+.sp-rate-note b { font-weight: 750; }
+
+.sp-age { margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: var(--cx-ink); color: #fff; font: 700 13px Manrope, sans-serif; font-style: normal; vertical-align: middle; }
+
+/* ---- the route: home regions and why a shopper moved ------------------------------------------------------------------------- */
+.cx-home { margin-left: auto; font-size: 14.5px; }
+.cx-browser .cx-route { margin-left: 18px; }
+.cx-why-line { margin: -8px 0 18px; padding: 12px 16px; border: 1.5px solid var(--cx-amber-line); border-radius: 14px; background: var(--cx-amber-bg); color: var(--cx-amber-ink); font-size: 15px; line-height: 1.45; animation: cx-rise .4s both; }
+
+/* ---- region cards: load, queue, power -------------------------------------------------------------------------------------- */
+.rc-load { display: grid; gap: 9px; padding: 14px 16px; border-radius: 14px; background: var(--cx-soft); }
+.rc-load-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 14.5px; color: var(--cx-mute); }
+.rc-load-head strong { font: 800 22px/1 Manrope, sans-serif; letter-spacing: -.02em; color: var(--cx-ink); }
+.rc-bar { height: 8px; border-radius: 8px; background: #e3e3dd; overflow: hidden; }
+.rc-bar i { display: block; width: 0; height: 100%; border-radius: 8px; background: linear-gradient(90deg, #5fc58a, var(--cx-green)); transition: width .6s cubic-bezier(.2, .8, .2, 1), background .3s; }
+.rc-bar i.is-hot { background: linear-gradient(90deg, #f1b24a, var(--cx-amber)); }
+.rc-load-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; min-height: 22px; font-size: 14px; color: var(--cx-mute); }
+.rc-load-foot b { color: var(--cx-ink); }
+.rc-tag { padding: 3px 9px; border-radius: 999px; font-size: 13.5px; font-weight: 650; }
+.rc-tag--warn { background: var(--cx-amber-bg); color: var(--cx-amber-ink); border: 1px solid var(--cx-amber-line); }
+.rc-power { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; font-size: 14.5px; color: var(--cx-mute); }
+.rc-power small { margin-left: auto; font-size: 13.5px; }
+.rc .seg { background: #ecece7; }
+.rc .seg__btn { min-height: 32px; padding: 4px 10px; font-size: 13.5px; }
+.rc .seg__btn--on { background: #fff; color: var(--cx-ink); }
+.rc--down .rc-load, .rc--crashing .rc-load { opacity: .55; }
+
+/* a region that is configured but has not joined */
+.rc--add { border-style: dashed; border-color: #cfd1c8; background: #fcfcfa; }
+.rc--add .rc-pill { background: #efefeb; }
+.rc--add.is-starting { border-style: solid; border-color: var(--cx-amber-line); background: linear-gradient(#fffdf8, #fff); }
+.rc-add { width: 100%; }
+.rc-hint { margin: -6px 0 0; font-size: 13.5px; line-height: 1.4; color: var(--cx-mute); }
+
+/* ---- Network tab: limits and the load test ----------------------------------------------------------------------------------- */
+.limits .limit-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.limits .limit-row--head { padding-top: 16px; }
+.limit-text b { display: flex; align-items: center; gap: 8px; font-size: 15.5px; }
+.limit-text small { display: block; margin-top: 3px; max-width: 540px; font-size: 14px; line-height: 1.4; color: var(--muted); }
+.limit-rate { display: flex; align-items: center; gap: 10px; }
+.limit-rate small { font-size: 13.5px; color: var(--muted); }
+.limit-row--region.is-on { background: linear-gradient(90deg, var(--cx-amber-bg), transparent 70%); }
+.btn--spam { background: var(--cx-amber-bg); border-color: var(--cx-amber-line); color: var(--cx-amber-ink); }
+.btn--spam:hover:not(:disabled) { background: color-mix(in srgb, var(--cx-amber) 18%, #fff); }
+
+.loadbar { display: grid; gap: 8px; margin-top: 14px; font-size: 14.5px; color: var(--text-2); }
+.loadbar-track { height: 8px; border-radius: 8px; background: #e3e3dd; overflow: hidden; }
+.loadbar-track i { display: block; height: 100%; border-radius: 8px; background: var(--cx-green); transition: width .15s linear; }
+.loadlast { margin: 14px 0 0; padding: 12px 14px; border: 1px solid var(--cx-green-line); border-radius: 12px; background: var(--cx-green-bg); font-size: 14.5px; line-height: 1.55; color: var(--cx-green-ink); }
+.loadlast b { color: var(--cx-ink); }
+
+/* request dots: a refusal by the shopper's own limit is an amber ring, not a failure */
+.dot--refused { border: 2px solid var(--cx-amber); background: transparent !important; }
+.dot-refused { display: inline-block; width: 9px; height: 9px; border-radius: 50%; border: 2px solid var(--cx-amber); }
+.tamper li.is-pending { opacity: .8; }
+
+/* ---- Scaling tab ------------------------------------------------------------------------------------------------------------ */
+.scaling section + section { padding-top: 6px; border-top: 1px solid var(--border); }
+.scale-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.scale-card { padding: 20px 22px; border: 1.5px solid var(--cx-line); border-radius: 18px; background: #fff; }
+.scale-card.is-measured { border-color: var(--cx-green-line); background: linear-gradient(#f6fcf8, #fff); }
+.scale-card header h4 { margin: 0 0 2px; font: 800 17px Manrope, sans-serif; }
+.scale-card header span { font-size: 14px; }
+.scale-big { display: block; margin: 12px 0 4px; font: 800 44px/1.1 Manrope, sans-serif; letter-spacing: -.03em; animation: cx-pop .45s both; }
+.scale-big small { font: 600 15px var(--font); letter-spacing: 0; color: var(--cx-mute); }
+.scale-none { display: block; margin: 12px 0 6px; font: 800 24px Manrope, sans-serif; color: var(--cx-mute); }
+.scale-card code { font-size: 13.5px; word-break: break-word; }
+.scale-verdict { margin: 14px 0 4px; padding: 12px 16px; border-radius: 12px; background: var(--cx-soft); font-size: 16px; font-weight: 600; }
+.scale-bars { list-style: none; display: grid; gap: 10px; margin: 6px 0 4px; padding: 0; }
+.scale-bars li { display: grid; grid-template-columns: 130px minmax(0, 1fr) 150px; align-items: center; gap: 14px; font-size: 15px; }
+.scale-track { height: 14px; border-radius: 14px; background: #ecece7; overflow: hidden; }
+.scale-track i { display: block; height: 100%; border-radius: 14px; background: linear-gradient(90deg, #5fc58a, var(--cx-green)); transition: width .8s cubic-bezier(.2, .8, .2, 1); }
+.scale-bars b { text-align: right; font-weight: 750; }
+.scale-bars b small { font-weight: 500; color: var(--cx-mute); }
+.scale-runs .table td small { font-size: 13.5px; }
+.scale-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; }
+.scale-note svg { flex: none; margin-top: 3px; }
+
+@media (max-width: 700px) {
+  .scale-bars li { grid-template-columns: 96px minmax(0, 1fr); }
+  .scale-bars li b { grid-column: 1 / -1; text-align: left; }
+  .cx-home { margin-left: 0; }
+}

@@ -13,14 +13,22 @@ Every event is hashed and signed by THIS region inside the write transaction (pl
 Auth mode (AUTH_ENABLED, TRUE credential sessions) adds `provenance` = {role, auth_mode, credential_id} taken from
 the VERIFIED session. It is put in the envelope BEFORE hashing and signing, so it is part of the signed history
 (a CREATE also fixes the cart `owner`), and it binds an op_id to the actor who first used it.
+
+Rate limit (contract v1.2, 8.3; region/api/ratelimit.py, off by default): every write that is not a replay spends
+one token of the caller's allowance, inside the transaction, right after the replay check and before anything is
+read or stored. With no token left the write raises RateLimited: nothing is stored and no sequence number is used.
 """
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
 from region import config, store
+from region.api import ratelimit
 from region.engine import canonical, hlc, priority, signing
 from region.engine.derive import CLOSED, derive
+
+# NotFound, StaleEdit, ReportExists and NoConflict raised AFTER the caller was charged carry `.rate` (the allowance
+# left), so the HTTP layer can report it on a 404 / 409 as well.
 
 
 class NotFound(Exception):
@@ -48,6 +56,7 @@ class NoConflict(Exception):
 class WriteResult:
     event: dict
     replay: bool = False  # True: an earlier write with the same op_id was returned, nothing new stored
+    rate: Optional[ratelimit.Decision] = None  # the caller's allowance after this write; None while the limit is off
 
 
 _loop = None  # the server's event loop, set by main.py; lets a worker thread hand an event to the push queue
@@ -136,31 +145,48 @@ def _own_op(prior: dict, actor: str, provenance) -> bool:
     return provenance is None or prior.get("actor") == actor
 
 
+def _charge(subject: str) -> Optional[ratelimit.Decision]:
+    """Spend one token of `subject`'s allowance, or raise RateLimited. None while the limit is off."""
+    rate = ratelimit.take(subject)
+    if rate is not None and not rate.allowed:
+        raise ratelimit.RateLimited(rate)
+    return rate
+
+
 def local_write(report_id, type_, field, value, actor, expected=None, *, op_id=None,
-                role="officer", auth_mode="online", provenance=None, reason=None) -> WriteResult:
-    """Append one event and refresh the report view in the same transaction."""
-    with store.tx() as conn:
-        if op_id:
-            prior = store.event_by_op(conn, op_id)
-            if prior is not None:  # same operation seen here already (written here, replicated or carried)
-                if not _same_request(prior, type_, report_id, field, value) or not _own_op(prior, actor, provenance):
-                    raise OpIdReuse(op_id)
-                return WriteResult(prior, replay=True)
-        if type_ == "CREATE":
-            if report_id is not None and store.report_exists(conn, report_id):
-                raise ReportExists(report_id)
-            live = []
-        else:
-            if not store.report_exists(conn, report_id):
-                raise NotFound(report_id)
-            live = store.live_ids(conn, report_id, field) if field else []
-        if expected is not None and sorted(expected) != sorted(live):
-            raise StaleEdit(live)
-        ev = _append(conn, report_id=report_id, type_=type_, field=field, value=value, actor=actor,
-                     role=role, auth_mode=auth_mode, op_id=op_id, supersedes=live, reason=reason,
-                     provenance=provenance)
+                role="officer", auth_mode="online", provenance=None, reason=None, rate_key=None) -> WriteResult:
+    """Append one event and refresh the report view in the same transaction.
+
+    rate_key: whose rate-limit allowance this write spends (ratelimit.key(auth)); the actor when not given."""
+    subject = rate_key or actor
+    rate = None
+    try:
+        with store.tx() as conn:
+            if op_id:
+                prior = store.event_by_op(conn, op_id)
+                if prior is not None:  # same operation seen here already (written here, replicated or carried)
+                    if not _same_request(prior, type_, report_id, field, value) or not _own_op(prior, actor, provenance):
+                        raise OpIdReuse(op_id)
+                    return WriteResult(prior, replay=True, rate=ratelimit.peek(subject))  # a retry is never charged
+            rate = _charge(subject)
+            if type_ == "CREATE":
+                if report_id is not None and store.report_exists(conn, report_id):
+                    raise ReportExists(report_id)
+                live = []
+            else:
+                if not store.report_exists(conn, report_id):
+                    raise NotFound(report_id)
+                live = store.live_ids(conn, report_id, field) if field else []
+            if expected is not None and sorted(expected) != sorted(live):
+                raise StaleEdit(live)
+            ev = _append(conn, report_id=report_id, type_=type_, field=field, value=value, actor=actor,
+                         role=role, auth_mode=auth_mode, op_id=op_id, supersedes=live, reason=reason,
+                         provenance=provenance)
+    except (NotFound, StaleEdit, ReportExists) as exc:
+        exc.rate = rate
+        raise
     _after_commit(ev)
-    return WriteResult(ev)
+    return WriteResult(ev, rate=rate)
 
 
 def local_write_ex(report_id, type_, field, value, actor, expected=None, op_id=None, new_report_id=None,
@@ -172,27 +198,34 @@ def local_write_ex(report_id, type_, field, value, actor, expected=None, op_id=N
 
 
 def resolve(report_id, field, value, candidates, reason, actor, *, role="supervisor", auth_mode="online",
-            op_id=None, provenance=None) -> WriteResult:
+            op_id=None, provenance=None, rate_key=None) -> WriteResult:
     """A supervisor settles a conflicted field (plan 6.7). The RESOLVE event supersedes exactly the live
     candidates and replicates like any event; it never hides an edit it did not see."""
-    with store.tx() as conn:
-        if op_id:
-            prior = store.event_by_op(conn, op_id)
-            if prior is not None:
-                if not (prior["type"] == "RESOLVE" and prior.get("field") == field and prior["value"] == value
-                        and _own_op(prior, actor, provenance)):
-                    raise OpIdReuse(op_id)
-                return WriteResult(prior, replay=True)
-        if not store.report_exists(conn, report_id):
-            raise NotFound(report_id)
-        live = store.live_ids(conn, report_id, field)
-        if sorted(live) != sorted(candidates):
-            raise StaleEdit(live)  # it changed while the supervisor was looking
-        view = derive(store.events_for(conn, report_id))
-        if field not in [c["field"] for c in view["conflicts"]]:
-            raise NoConflict(field)
-        ev = _append(conn, report_id=report_id, type_="RESOLVE", field=field, value=value, actor=actor,
-                     role=role, auth_mode=auth_mode, op_id=op_id, supersedes=live, reason=reason,
-                     provenance=provenance)
+    subject = rate_key or actor
+    rate = None
+    try:
+        with store.tx() as conn:
+            if op_id:
+                prior = store.event_by_op(conn, op_id)
+                if prior is not None:
+                    if not (prior["type"] == "RESOLVE" and prior.get("field") == field and prior["value"] == value
+                            and _own_op(prior, actor, provenance)):
+                        raise OpIdReuse(op_id)
+                    return WriteResult(prior, replay=True, rate=ratelimit.peek(subject))
+            rate = _charge(subject)
+            if not store.report_exists(conn, report_id):
+                raise NotFound(report_id)
+            live = store.live_ids(conn, report_id, field)
+            if sorted(live) != sorted(candidates):
+                raise StaleEdit(live)  # it changed while the supervisor was looking
+            view = derive(store.events_for(conn, report_id))
+            if field not in [c["field"] for c in view["conflicts"]]:
+                raise NoConflict(field)
+            ev = _append(conn, report_id=report_id, type_="RESOLVE", field=field, value=value, actor=actor,
+                         role=role, auth_mode=auth_mode, op_id=op_id, supersedes=live, reason=reason,
+                         provenance=provenance)
+    except (NotFound, StaleEdit, NoConflict) as exc:
+        exc.rate = rate
+        raise
     _after_commit(ev)
-    return WriteResult(ev)
+    return WriteResult(ev, rate=rate)

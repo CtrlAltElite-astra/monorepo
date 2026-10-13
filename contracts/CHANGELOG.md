@@ -35,3 +35,13 @@
   - Conflict receipts gain `relationship`, `candidates[]`, `provisional`, `policy_version`, `flags` (`values`/`event_ids` kept).
     New rules: `HIGHEST`, `STATUS_MOST_ACTIVE`, `EARLIEST_HLC` (+ `DOUBLE_DISPATCH`), `LATEST_HLC`, `CLOSE_VS_NEW_INFO`.
   - `CATEGORIES` gains `cart`.
+- **v1.2 scaling, rate limiting, identity claims (2026-10-13, additive)** frozen before the four lanes start; contracts.md section 8.
+  - Settings `RATE_ACTOR_BURST`, `RATE_ACTOR_REFILL_PER_S` (Lane A), `REGION_WRITE_LIMIT_PER_S`, `POWER` (Lane D); all off by default.
+    `POST /admin/config` accepts `rate_actor_burst`, `rate_actor_refill_per_s`, `region_write_limit_per_s`, `power`.
+  - New refusals: `429 rate_limited` (per actor, with `Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining`),
+    `503 overloaded` (per region), `403 claim_required`. Reads and `op_id` replays are never limited.
+  - `GET /v1/status` gains optional `load {writes_per_s, power, batch, queue_depth}` and
+    `rate {actor_burst, actor_refill_per_s, region_limit_per_s, refused_actor, refused_region}`.
+  - Fourth region `blr` (Bengaluru, port 8004), not started by default.
+  - `region/trust/claims.py`: `subject_key`, `has_claim`, `is_revoked`; rejection reason `revoked_credential`; note key `requires`.
+  - CORS additionally exposes `X-RateLimit-Limit` and `X-RateLimit-Remaining`.

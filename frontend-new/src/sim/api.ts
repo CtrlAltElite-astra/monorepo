@@ -1,15 +1,25 @@
 // The simulator's REST surface (MOCK MODE): the same paths, status codes and bodies as the real regions
-// (contracts/contracts.md v1.1), so the SDK and UI cannot tell the difference.
-import type { CarryResult, EventEnvelope, HttpResult, ReportView, RegionId, Role, Status, Transport, RequestOptions, Chaos } from '../api/types'
+// (contracts/contracts.md v1.2), so the SDK and UI cannot tell the difference.
+import type { CarryResult, EventEnvelope, HttpResult, ReportView, RegionId, Role, Status, Transport, RequestOptions, Chaos, ConfigSet, Power } from '../api/types'
 import { NetworkError } from '../api/types'
 import { canonical, sleep } from '../lib/util'
 import { eventHash, verify } from './crypto'
 import { POLICY_VERSION, order } from './derive'
-import { ALL_REGIONS, REGION_NAMES, SimNode, SimWorld, type LinkMode } from './world'
+import { ALL_REGIONS, POWER_BATCH, REGION_NAMES, SimNode, SimWorld, type LinkMode, type TokenDecision } from './world'
 
-interface Res { status: number; headers?: Record<string, string>; body: any }
+/** `delayMs` is how long the commit queue holds the acknowledgement back (see SimNode.commit); the transport waits it out. */
+interface Res { status: number; headers?: Record<string, string>; body: any; delayMs?: number }
 const ok = (body: any, status = 200, headers: Record<string, string> = {}): Res => ({ status, body, headers })
 const fail = (status: number, body: any): Res => ({ status, body })
+
+/** X-RateLimit-* on a write while a per-actor limit is set (contract 8.3). */
+const rateHeaders = (d: TokenDecision | null): Record<string, string> => (d ? { 'x-ratelimit-limit': String(d.limit), 'x-ratelimit-remaining': String(d.remaining) } : {})
+const POWERS: Power[] = ['low', 'medium', 'high']
+
+/** The settings `POST /admin/config` returns: the full current set (contract 8.1). */
+export const configOf = (node: SimNode): ConfigSet => ({
+  rate_actor_burst: node.actorBurst, rate_actor_refill_per_s: node.actorRefill, region_write_limit_per_s: node.regionLimit, power: node.power,
+})
 
 const CATEGORIES = ['flood', 'collapse', 'medical', 'fire', 'road_block', 'shelter', 'other', 'cart']
 const STATUSES = ['open', 'assigned', 'resolved', 'closed', 'cancelled']
@@ -67,44 +77,71 @@ function observedFor(node: SimNode, reportId: string, type: string, field: strin
   return null
 }
 
-interface WriteArgs { type: 'CREATE' | 'SET' | 'NOTE' | 'RESOLVE'; reportId: string | null; field: string | null; value: any; expected?: string[] | null; opId?: string | null; role: Role; reason?: string | null; candidates?: string[] }
+interface WriteArgs {
+  type: 'CREATE' | 'SET' | 'NOTE' | 'RESOLVE'; reportId: string | null; field: string | null; value: any; expected?: string[] | null; opId?: string | null
+  role: Role; reason?: string | null; candidates?: string[]
+  /** who is writing (a shopper's name); the per-actor limit counts per actor. Default: the role's own account on this node. */
+  actor?: string
+  /** skip the limits and the commit queue (the legacy /admin/burst, which is not client traffic) */
+  unmetered?: boolean
+}
 
+/** Order of checks, as in the real write path: an op_id replay is answered first and is never limited or counted; then the
+ *  region limit (503, a refusal that costs the shopper nothing); then the shopper's own limit (429); then the write itself. */
 function write(world: SimWorld, node: SimNode, a: WriteArgs): Res {
   const sameRequest = (p: EventEnvelope) => p.type === a.type && p.field === a.field && canonical(p.value) === canonical(a.value) && (a.reportId === null || p.report_id === a.reportId)
+  const now = Date.now()
+  const who = a.actor ?? `${ACTOR[a.role]}-${node.id}-1`
   if (a.opId) {
     const prior = node.events.get(node.byOp.get(a.opId) ?? '')
     if (prior) {
       if (!sameRequest(prior)) return fail(409, { error: 'op_id_reuse' })
-      return replay(world, node, prior)
+      return replay(world, node, prior, rateHeaders(a.unmetered ? null : node.peekToken(who, now)))
     }
   }
+  let rate: TokenDecision | null = null
+  if (!a.unmetered) {
+    const wait = node.regionRetryS(now)
+    if (wait) {
+      node.refusedRegion++
+      return { status: 503, headers: { 'retry-after': String(wait) }, body: { error: 'overloaded', scope: 'region' } }
+    }
+    rate = node.takeToken(who, now)
+    if (rate && !rate.allowed) {
+      return { status: 429, headers: { ...rateHeaders(rate), 'retry-after': String(Math.max(1, Math.ceil(rate.retryAfterMs / 1000))) }, body: { error: 'rate_limited', scope: 'actor', retry_after_ms: rate.retryAfterMs } }
+    }
+    node.noteAccepted(now)
+  }
+  const refuse = (status: number, body: any): Res => ({ status, body, headers: rateHeaders(rate) }) // charged, then refused for its own reason
   let reportId = a.reportId
   let live: string[] = []
   if (a.type === 'CREATE') {
-    if (reportId && node.eventsOf(reportId).length) return fail(409, { error: 'report_exists' })
+    if (reportId && node.eventsOf(reportId).length) return refuse(409, { error: 'report_exists' })
   } else {
-    if (!node.eventsOf(reportId!).length) return fail(404, { detail: 'unknown report' })
+    if (!node.eventsOf(reportId!).length) return refuse(404, { detail: 'unknown report' })
     live = a.field ? node.view(reportId!).live[a.field] ?? [] : []
   }
   if (a.type === 'RESOLVE') {
-    if ([...live].sort().join() !== [...(a.candidates ?? [])].sort().join()) return fail(409, { error: 'stale_edit', live })
-    if (!node.view(reportId!).conflicts.some((c) => c.field === a.field)) return fail(409, { error: 'no_conflict' })
+    if ([...live].sort().join() !== [...(a.candidates ?? [])].sort().join()) return refuse(409, { error: 'stale_edit', live })
+    if (!node.view(reportId!).conflicts.some((c) => c.field === a.field)) return refuse(409, { error: 'no_conflict' })
   } else if (a.expected && [...a.expected].sort().join() !== [...live].sort().join()) {
-    return fail(409, { error: 'stale_edit', live })
+    return refuse(409, { error: 'stale_edit', live })
   }
   if (a.type === 'CREATE' && !reportId) reportId = `R-${node.id}-${node.seq + 1}`
   const ev = world.append(node.id, {
     report_id: reportId!, type: a.type, field: a.field, value: a.value, supersedes: live, op_id: a.opId ?? null,
-    observed: observedFor(node, reportId!, a.type, a.field, a.value), actor: `${ACTOR[a.role]}-${node.id}-1`, role: a.role,
+    observed: observedFor(node, reportId!, a.type, a.field, a.value), actor: who, role: a.role,
     auth_mode: 'online', reason: a.reason ?? null,
   }, classify(a.type, a.field, a.value))
   const report = reportView(world, node, reportId!)
-  return ok({ report, event: ev, event_id: ev.event_id, consistency: report.consistency }, a.type === 'SET' ? 200 : 201)
+  const res = ok({ report, event: ev, event_id: ev.event_id, consistency: report.consistency }, a.type === 'SET' ? 200 : 201, rateHeaders(rate))
+  if (!a.unmetered) res.delayMs = node.commit(now)
+  return res
 }
 
-function replay(world: SimWorld, node: SimNode, ev: EventEnvelope): Res {
+function replay(world: SimWorld, node: SimNode, ev: EventEnvelope, headers: Record<string, string> = {}): Res {
   const report = reportView(world, node, ev.report_id)
-  return ok({ report, event: ev, event_id: ev.event_id, consistency: report.consistency }, 200, { 'idempotent-replay': 'true' })
+  return ok({ report, event: ev, event_id: ev.event_id, consistency: report.consistency }, 200, { 'idempotent-replay': 'true', ...headers })
 }
 
 function status(world: SimWorld, node: SimNode): Status {
@@ -121,17 +158,25 @@ function status(world: SimWorld, node: SimNode): Status {
       last_error: reachable ? null : node.link(p).mode === 'down' ? 'link_down' : 'unreachable',
     }
   }
-  const views = node.reportIds().sort().map((id) => [id, node.view(id)] as const)
-  const lines = [...node.events.values()].map((e) => `${e.event_id}:${e.hash}`).sort().join('\n')
+  const log = node.memo('hashes', () => {
+    const views = node.reportIds().sort().map((id) => [id, node.view(id)] as const)
+    const lines = [...node.events.values()].map((e) => `${e.event_id}:${e.hash}`).sort().join('\n')
+    return {
+      digest: eventHashOf(lines), incomplete: views.filter(([, v]) => v.incomplete).length,
+      state: eventHashOf(canonical(views.map(([id, v]) => [id, { s: v.state, l: v.live, c: v.conflicts.length }]))),
+    }
+  })
   const unrep = node.unreplicated(world.peersOf(node.id))
   const first = [...unrep].sort((x, y) => x.seq - y.seq)[0]
   return {
     region: node.id, level: world.level(node.id), policy_version: POLICY_VERSION, schema_version: 1,
     heads: node.heads(joined), event_count: node.events.size, peers,
-    event_digest: eventHashOf(lines), state_hash: eventHashOf(canonical(views.map(([id, v]) => [id, { s: v.state, l: v.live, c: v.conflicts.length }]))),
-    quarantined: node.quarantine.length, incomplete_reports: views.filter(([, v]) => v.incomplete).length,
+    event_digest: log.digest, state_hash: log.state,
+    quarantined: node.quarantine.length, incomplete_reports: log.incomplete,
     risk: { unreplicated: unrep.length, critical_unreplicated: unrep.filter((e) => e.priority === 0).length, oldest_age_ms: first ? Math.max(0, now - new Date(first.wall).getTime()) : 0 },
     queues: world.pendingByLane(node.id), carry: { ...node.carry },
+    load: { writes_per_s: node.writesPerS(now), power: node.power, batch: POWER_BATCH[node.power], queue_depth: node.queueDepth(now) },
+    rate: { actor_burst: node.actorBurst, actor_refill_per_s: node.actorRefill, region_limit_per_s: node.regionLimit, refused_actor: node.refusedActor, refused_region: node.refusedRegion },
   }
 }
 
@@ -180,8 +225,26 @@ function metrics(world: SimWorld, node: SimNode): Res {
   return ok({ writes: own, commit_ms: { p50: pct(0.5), p95: pct(0.95) }, duplicates: node.duplicates, lag_s: pending.length ? Math.max(...pending.map((q) => (Date.now() - new Date(q.event.wall).getTime()) / 1000)) : 0, catch_up_s: node.lastCatchUpMs === null ? null : node.lastCatchUpMs / 1000, peers })
 }
 
-/** Route one request to one node. `role` is what the API key would be (null: none sent). */
-export function handle(world: SimWorld, region: RegionId, method: string, rawPath: string, body: any, role: Role | null): Res {
+/** `POST /admin/config` (contract 8.1): any of the four settings; an unknown key or a bad value is 422; the answer is the full set. */
+function config(node: SimNode, body: any): Res {
+  const b = body && typeof body === 'object' && !Array.isArray(body) ? body : {}
+  const known = ['rate_actor_burst', 'rate_actor_refill_per_s', 'region_write_limit_per_s', 'power']
+  const unknown = Object.keys(b).filter((k) => !known.includes(k))
+  if (unknown.length) return fail(422, { detail: `unknown setting: ${unknown.join(', ')}` })
+  const whole = (v: any) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 100000
+  if ('rate_actor_burst' in b && !whole(b.rate_actor_burst)) return fail(422, { detail: 'rate_actor_burst must be a whole number, 0 or more' })
+  if ('rate_actor_refill_per_s' in b && !(typeof b.rate_actor_refill_per_s === 'number' && b.rate_actor_refill_per_s >= 0 && b.rate_actor_refill_per_s <= 100000)) return fail(422, { detail: 'rate_actor_refill_per_s must be a number, 0 or more' })
+  if ('region_write_limit_per_s' in b && !whole(b.region_write_limit_per_s)) return fail(422, { detail: 'region_write_limit_per_s must be a whole number, 0 or more' })
+  if ('power' in b && !POWERS.includes(b.power)) return fail(422, { detail: 'power must be low, medium or high' })
+  if ('rate_actor_burst' in b) node.actorBurst = b.rate_actor_burst
+  if ('rate_actor_refill_per_s' in b) node.actorRefill = b.rate_actor_refill_per_s
+  if ('region_write_limit_per_s' in b) node.regionLimit = b.region_write_limit_per_s
+  if ('power' in b) node.power = b.power
+  return ok(configOf(node))
+}
+
+/** Route one request to one node. `role` is what the API key would be (null: none sent); `actor` names the shopper writing. */
+export function handle(world: SimWorld, region: RegionId, method: string, rawPath: string, body: any, role: Role | null, actor?: string): Res {
   const node = world.node(region)
   const url = new URL(rawPath, 'http://sim')
   const path = url.pathname
@@ -209,7 +272,7 @@ export function handle(world: SimWorld, region: RegionId, method: string, rawPat
     const value = { title: b.title, category: b.category, severity: b.severity, status: 'open', assigned_team: null, location: b.location ?? null, description: b.description ?? '', people_estimate: b.people_estimate ?? null }
     for (const f of ['title', 'category', 'severity', 'location', 'description', 'people_estimate'] as const) { const bad = validateField(f, (value as any)[f]); if (bad) return fail(422, { detail: bad }) }
     if (b.report_id !== undefined && b.report_id !== null && !/^R-[0-9a-f]{8}$/.test(b.report_id)) return fail(422, { detail: 'report_id must match R-<8 hex>' })
-    return write(world, node, { type: 'CREATE', reportId: b.report_id ?? null, field: null, value, opId: b.op_id, role: role! })
+    return write(world, node, { type: 'CREATE', reportId: b.report_id ?? null, field: null, value, opId: b.op_id, role: role!, actor })
   }
   hit = m(/^\/v1\/reports\/([^/]+)$/)
   if (method === 'PATCH' && hit) {
@@ -217,14 +280,14 @@ export function handle(world: SimWorld, region: RegionId, method: string, rawPat
     if (!writer) return fail(403, { detail: `role '${role}' may not set` })
     const bad = validateField(body?.field, body?.value)
     if (bad) return fail(422, { detail: bad })
-    return write(world, node, { type: 'SET', reportId: hit[1], field: body.field, value: body.value, expected: body.expected, opId: body.op_id, role: role! })
+    return write(world, node, { type: 'SET', reportId: hit[1], field: body.field, value: body.value, expected: body.expected, opId: body.op_id, role: role!, actor })
   }
   hit = m(/^\/v1\/reports\/([^/]+)\/notes$/)
   if (method === 'POST' && hit) {
     if (role === null) return fail(401, { detail: 'missing or unknown X-API-Key' })
     if (!writer) return fail(403, { detail: `role '${role}' may not note` })
     if (typeof body?.text !== 'string' || !body.text.length || body.text.length > 2000) return fail(422, { detail: 'note must be 1-2000 chars' })
-    return write(world, node, { type: 'NOTE', reportId: hit[1], field: null, value: { text: body.text }, opId: body.op_id, role: role! })
+    return write(world, node, { type: 'NOTE', reportId: hit[1], field: null, value: { text: body.text }, opId: body.op_id, role: role!, actor })
   }
   hit = m(/^\/v1\/reports\/([^/]+)\/resolve$/)
   if (method === 'POST' && hit) {
@@ -233,7 +296,7 @@ export function handle(world: SimWorld, region: RegionId, method: string, rawPat
     const bad = validateField(body?.field, body?.value)
     if (bad) return fail(422, { detail: bad })
     if (!body.reason || String(body.reason).length > 500 || !Array.isArray(body.candidates) || !body.candidates.length) return fail(422, { detail: 'reason and candidates are required' })
-    return write(world, node, { type: 'RESOLVE', reportId: hit[1], field: body.field, value: body.value, candidates: body.candidates, reason: body.reason, opId: body.op_id, role: role! })
+    return write(world, node, { type: 'RESOLVE', reportId: hit[1], field: body.field, value: body.value, candidates: body.candidates, reason: body.reason, opId: body.op_id, role: role!, actor })
   }
   if (method === 'POST' && path === '/v1/carry') return carry(world, node, body?.events)
   if (method === 'POST' && path === '/v1/events/has') {
@@ -253,13 +316,14 @@ export function handle(world: SimWorld, region: RegionId, method: string, rawPat
       node.links[hit[1]] = { mode, delay_ms: mode === 'slow' ? Number(body.delay_ms) || 150 : 0, rate_bps: rate }
       return ok({ peer: hit[1], ...node.link(hit[1] as RegionId) })
     }
+    if (method === 'POST' && path === '/admin/config') return config(node, body)
     if (method === 'POST' && path === '/admin/burst') {
       const n = clampInt(String(body?.n ?? 100), 100, 1, 1000)
       const target = body?.report_id ?? node.listIds()[0]
       if (!target) return fail(409, { error: 'no_report' })
       for (let i = 0; i < n; i++) {
         const text = JSON.stringify({ kind: 'ADD', sku: 'CHAI-01', name: 'Masala chai box', qty: 1, price: 349, user: 'burst' })
-        write(world, node, { type: 'NOTE', reportId: target, field: null, value: { text }, opId: `burst-${Date.now()}-${node.seq}-${i}`, role: 'supervisor' })
+        write(world, node, { type: 'NOTE', reportId: target, field: null, value: { text }, opId: `burst-${Date.now()}-${node.seq}-${i}`, role: 'supervisor', unmetered: true })
       }
       return ok({ accepted: n })
     }
@@ -290,9 +354,16 @@ export class SimTransport implements Transport {
       throw new NetworkError(`${region} did not answer`, node.booting ? 'timeout' : 'refused')
     }
     this.n++
-    await sleep(18 + ((this.n * 7) % 24))
+    const network = 18 + ((this.n * 7) % 24)
+    await sleep(network)
     if (!node.up) throw new NetworkError(`${region} died during the request`, 'refused')
-    const res = handle(this.world, region, method, path, opts.body === undefined ? undefined : JSON.parse(JSON.stringify(opts.body)), opts.as ?? (method === 'GET' ? null : 'officer'))
+    const res = handle(this.world, region, method, path, opts.body === undefined ? undefined : JSON.parse(JSON.stringify(opts.body)), opts.as ?? (method === 'GET' ? null : 'officer'), opts.actor?.toLowerCase())
+    if (res.delayMs) {
+      // the write is already committed in the world; the commit queue only holds back the acknowledgement. When that takes
+      // longer than the caller will wait, the caller sees a timeout, exactly like a loaded server, and retries with its op_id.
+      if (network + res.delayMs > timeout) { await sleep(Math.max(0, timeout - network)); throw new NetworkError(`${region} did not answer in time`, 'timeout') }
+      await sleep(res.delayMs)
+    }
     return { status: res.status, headers: res.headers ?? {}, body: JSON.parse(JSON.stringify(res.body)) as T, ms: Date.now() - started }
   }
 }

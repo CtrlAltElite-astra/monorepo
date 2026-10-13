@@ -1,9 +1,10 @@
-# SyncShield contracts (v1.1) — owner: Akshit
+# SyncShield contracts (v1.2) — owner: Akshit
 
 Contract version stays `1`. This file, `schemas.py` and the fixtures may only **grow**
 (new optional fields, new endpoints). Never rename or remove. Changes go through a PR
 labelled `contract` and a line in `CHANGELOG.md`. v1.1 is additive: every new field is nullable,
-so older events, fixtures and clients keep working.
+so older events, fixtures and clients keep working. v1.2 (section 8: scaling, rate limiting, identity claims) is
+additive too: every new setting is off by default.
 
 ## 1. Event envelope
 
@@ -65,7 +66,8 @@ Client headers: `X-Api-Key` (writes), `Idempotency-Key` (optional alias of `op_i
 | 404 | unknown report |
 | 409 | `stale_edit` (stale `expected` / stale resolve, with `live`), `no_conflict`, `op_id_reuse`, `report_exists` |
 | 422 | validation, or a body larger than 512 kB |
-| 503 + `Retry-After` | overload or link down |
+| 429 + `Retry-After` | `rate_limited`: this actor sent writes faster than its allowance (v1.2, section 8.3) |
+| 503 + `Retry-After` | overload or link down; v1.2 adds the body `overloaded` for a region over its write limit |
 
 Bounds: title 120 · description 2 000 · note 2 000 · reason 500 · `supersedes`/`expected`/`candidates` ≤ 16 ·
 sync page ≤ 200 events · carry ≤ 200 events · has ≤ 500 ids · body ≤ 512 kB · `op_id` ≤ 64 chars.
@@ -238,7 +240,8 @@ but hashes differ (a bug alarm).
 ## 6. Cross-origin access
 
 Regions allow `CORS_ORIGINS` (default `http://localhost:5173`, `http://127.0.0.1:5173`, `:4173`) with the headers
-`X-Api-Key`, `Content-Type`, `Idempotency-Key`, `X-Admin-Key`, and expose `Idempotent-Replay` and `Retry-After`.
+`X-Api-Key`, `Content-Type`, `Idempotency-Key`, `X-Admin-Key`, and expose `Idempotent-Replay`, `Retry-After`,
+`X-RateLimit-Limit` and `X-RateLimit-Remaining`.
 
 ## 7. Policy v1 (the defined conflict-resolution policy; implemented in the engine by Lane B / Lane C)
 
@@ -257,3 +260,77 @@ Events sharing an `op_id` are ONE write: superseding one member supersedes all, 
 Events without `observed` (older nodes) never raise CLOSE_VS_NEW_INFO. Keys: `keys/<region>.key` (private, git-ignored) and
 `region/trust/public_keys.json` (registry, generated locally for development, git-ignored; `scripts/gen_keys.py`).
 Peers authenticate with `X-Peer-Token`, so an unsigned peer event is still accepted today and any signature present is verified.
+
+## 8. v1.2 additions: scaling, rate limiting, identity claims
+
+Frozen on 2026-10-13 so four lanes can build against it at the same time. Everything here is off by default
+(limits 0, power `medium`, sign-in off), so a region that sets nothing behaves exactly as in v1.1.
+
+### 8.1 Settings (environment, per region)
+
+| name | default | meaning | built by |
+|---|---|---|---|
+| `RATE_ACTOR_BURST` | 0 (off) | writes one actor may make at once: the size of its token bucket | Lane A |
+| `RATE_ACTOR_REFILL_PER_S` | 1 | tokens added to each actor's bucket per second (0: no refill, one burst and then nothing; `retry_after_ms` is then 3600000) | Lane A |
+| `REGION_WRITE_LIMIT_PER_S` | 0 (off) | writes this region accepts per second from clients | Lane D |
+| `POWER` | `medium` | writes saved per batch: `low` 1, `medium` 8, `high` 32 | Lane D |
+
+Runtime change: `POST /admin/config` accepts any of `{"rate_actor_burst", "rate_actor_refill_per_s",
+"region_write_limit_per_s", "power"}` and answers with the full current set. An unknown key is 422.
+The per-actor limiter reads `config.settings.rate_actor_burst` and `config.settings.rate_actor_refill_per_s` when
+those attributes exist, so `/admin/config` only has to update them; until then it reads the environment variables.
+
+### 8.2 Fourth region
+
+Id `blr`, name Bengaluru, port `8004`, database `data/blr.db`. It is in the port table but not started by default.
+
+### 8.3 Refusals
+
+```
+429  {"error": "rate_limited", "scope": "actor", "retry_after_ms": 800}
+     headers: Retry-After (whole seconds, at least 1), X-RateLimit-Limit, X-RateLimit-Remaining
+503  {"error": "overloaded", "scope": "region"}
+     header: Retry-After
+403  {"error": "claim_required", "claim": "age_over_18"}
+```
+
+- Reads are never limited. Peer replication (`/internal`) and `POST /v1/carry` are never limited.
+- A replay of an `op_id` already stored is answered before the limiter: it is never refused and never counted. The same
+  lookup decides `op_id_reuse` (409), so that answer is not counted either.
+- The actor limit is checked after authentication (and the role check) and after the replay check, before anything
+  else in the write path. Each write that reaches it costs one token, whatever its outcome; a refused write stores
+  nothing and uses no sequence number. Requests that fail validation (422) never reach it.
+- Every accepted write (and every replay) carries `X-RateLimit-Limit` and `X-RateLimit-Remaining` while a limit is set.
+  So does a write that was charged a token and then refused for its own reason (404, 409 `stale_edit`, `report_exists`,
+  `no_conflict`), so a client's meter is right after a refusal too.
+- The actor is the API key's actor today, so two clients that share one key share one allowance. When sign-in is on
+  it becomes the credential (section 8.5).
+- Buckets live in each region's memory. A client that moves to another region starts with a full allowance there:
+  this bounds the load on each region; it is not a global quota. A restart empties them.
+- `overloaded` is not a failure for a client that can reach another region: it should send the write there (same
+  `op_id`) and avoid the limited region until `Retry-After` has passed.
+
+### 8.4 Status additions (`GET /v1/status`)
+
+```json
+"load": {"writes_per_s": 3.2, "power": "medium", "batch": 8, "queue_depth": 0},
+"rate": {"actor_burst": 10, "actor_refill_per_s": 1, "region_limit_per_s": 0,
+         "refused_actor": 0, "refused_region": 0}
+```
+
+Both blocks may be absent (a v1.1 region): consumers must handle that. `region.api.ratelimit.snapshot()` returns the
+actor part of `rate` (`actor_burst`, `actor_refill_per_s`, `refused_actor`) for the status builder.
+
+### 8.5 Identity claims (Lane C provides, the others only call)
+
+```
+region/trust/claims.py
+  subject_key(auth) -> str             credential id when signed in, else the API-key actor. The rate limiter's key.
+  has_claim(auth, claim: str) -> bool  "age_over_18" | "member". Always False in API-key mode.
+  is_revoked(credential_id: str) -> bool
+```
+
+- Event provenance (already present when sign-in is on): `event["credential_id"]`.
+- An event whose `credential_id` is revoked is rejected by ingest and carry with the reason `revoked_credential` (Lane B).
+- A restricted product: the note JSON carries `"requires": "age_over_18"`; the write is refused with the 403 above
+  unless the session has proven that claim.

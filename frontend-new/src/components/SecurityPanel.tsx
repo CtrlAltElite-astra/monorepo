@@ -49,7 +49,7 @@ export function SecurityPanel() {
 
       <section>
         <h4><Icon name="skull" size={16} /> Tamper results</h4>
-        {!d.tamperRows.length ? <Empty icon="shield" title="No tampering yet">Use the Tamper button in the Network tab.</Empty> : (
+        {!d.tamperRows.length && !d.authMode ? <Empty icon="shield" title="No tampering yet">Use the Tamper button in the Network tab.</Empty> : (
           <ul className="tamper">
             {d.tamperRows.map((r, i) => (
               <li key={i} className={r.result === 'rejected' ? 'is-ok' : 'is-bad'}>
@@ -57,6 +57,12 @@ export function SecurityPanel() {
                 <span><b>{r.label}</b>{r.reason && <em> · {r.reason}: {REASON[r.reason] ?? ''}</em>}</span>
               </li>
             ))}
+            {d.authMode && (
+              <li className="is-pending" data-slot="revoked-credential">
+                <Chip tone="muted" icon="clock">not sent</Chip>
+                <span><b>An event signed by a revoked credential</b><em> · this row is filled in when the identity lane is joined</em></span>
+              </li>
+            )}
           </ul>
         )}
       </section>

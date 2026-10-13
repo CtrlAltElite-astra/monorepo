@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const proxy = Object.fromEntries(['mum', 'pun', 'del'].map((id, i) => [`/api/${id}`, {
+  const proxy = Object.fromEntries(['mum', 'pun', 'del', 'blr'].map((id, i) => [`/api/${id}`, {
     target: env[`${id.toUpperCase()}_BACKEND_URL`] || `http://127.0.0.1:${8001 + i}`,
     changeOrigin: true, rewrite: (p: string) => p.replace(`/api/${id}`, ''),
   }]))

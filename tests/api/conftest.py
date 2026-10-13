@@ -13,6 +13,7 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from region import config, store  # noqa: E402
+from region.api import ratelimit  # noqa: E402
 from region.engine import canonical  # noqa: E402
 from region.main import app  # noqa: E402
 from region.engine import signing  # noqa: E402
@@ -38,6 +39,16 @@ def no_dev_keys(tmp_path, monkeypatch):
     A test that needs keys overrides these two variables (see tests/api/test_carry_and_idempotency.py)."""
     monkeypatch.setenv("SIGNING_KEYS_DIR", str(tmp_path / "no-keys"))
     monkeypatch.setenv("PUBLIC_KEYS_FILE", str(tmp_path / "no-registry.json"))
+
+
+@pytest.fixture(autouse=True)
+def fresh_rate_limiter(monkeypatch):
+    """The per-actor limiter keeps its buckets in the process: every test starts and ends with it off and empty."""
+    monkeypatch.delenv("RATE_ACTOR_BURST", raising=False)
+    monkeypatch.delenv("RATE_ACTOR_REFILL_PER_S", raising=False)
+    ratelimit.reset()
+    yield
+    ratelimit.reset()
 
 
 @pytest.fixture

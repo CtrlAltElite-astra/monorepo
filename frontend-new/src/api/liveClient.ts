@@ -4,9 +4,10 @@ import type { Chaos, ChaosState, HttpResult, RegionId, RegionInfo, RequestOption
 import { NetworkError } from './types'
 
 const env = import.meta.env as Record<string, string | undefined>
-const NAMES: Record<string, string> = { mum: 'Mumbai', pun: 'Pune', del: 'Delhi' }
+const NAMES: Record<string, string> = { mum: 'Mumbai', pun: 'Pune', del: 'Delhi', blr: 'Bengaluru' }
 
-export const DEFAULT_REGION_URLS = 'mum=/api/mum,pun=/api/pun,del=/api/del'
+/** Bengaluru is listed so it can be found when it is started, but it is not part of the mesh until it answers (see state/demo.tsx). */
+export const DEFAULT_REGION_URLS = 'mum=/api/mum,pun=/api/pun,del=/api/del,blr=/api/blr'
 
 export function parseRegions(raw: string): RegionInfo[] {
   return raw.split(',').map((item) => item.trim()).filter(Boolean).map((item) => {
@@ -21,6 +22,17 @@ export const keys = (): Record<Role, string> => ({
   supervisor: env.VITE_SUPERVISOR_KEY || 'dev-supervisor',
   admin: env.VITE_ADMIN_KEY || 'dev-admin',
 })
+
+/** Optional per-shopper API keys, "Alice=dev-alice,Bob=dev-bob". With a key per shopper a region can count each shopper's own
+ *  allowance; without them every shopper uses the officer key and so shares one. */
+export function shopperKeys(raw = env.VITE_SHOPPER_KEYS || ''): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const item of raw.split(',')) {
+    const eq = item.indexOf('=')
+    if (eq > 0 && item.slice(eq + 1).trim()) out[item.slice(0, eq).trim()] = item.slice(eq + 1).trim()
+  }
+  return out
+}
 
 async function timed(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   const ctl = new AbortController()
@@ -44,7 +56,7 @@ export function createLiveTransport(raw = env.VITE_REGION_URLS || DEFAULT_REGION
       if (!info) throw new NetworkError(`no such region: ${region}`, 'refused')
       const headers: Record<string, string> = { ...opts.headers }
       if (opts.body !== undefined) headers['Content-Type'] = 'application/json'
-      if (method !== 'GET' || opts.as) headers['X-Api-Key'] = keys()[opts.as ?? 'officer']
+      if (method !== 'GET' || opts.as) headers['X-Api-Key'] = (!opts.as && opts.actor && shopperKeys()[opts.actor]) || keys()[opts.as ?? 'officer']
       const started = performance.now()
       const res = await timed(info.url + path, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) }, opts.timeoutMs ?? 1500)
       const out: Record<string, string> = {}

@@ -1,9 +1,12 @@
-// Shapes of contracts/contracts.md v1.1. The UI renders what the API returns; it never recomputes
+// Shapes of contracts/contracts.md v1.2. The UI renders what the API returns; it never recomputes
 // status, priority or conflicts. Mock mode returns exactly these shapes from the in-browser simulator.
 
-export type RegionId = 'mum' | 'pun' | 'del'
+/** `blr` (Bengaluru) is configured but not started by default: it joins a running mesh later (contract 8.2). */
+export type RegionId = 'mum' | 'pun' | 'del' | 'blr'
 export type Mode = 'mock' | 'live'
 export type Role = 'officer' | 'supervisor' | 'admin'
+/** Writes saved per batch: low 1, medium 8, high 32 (contract 8.1). */
+export type Power = 'low' | 'medium' | 'high'
 
 export interface RegionInfo {
   id: RegionId
@@ -109,6 +112,24 @@ export interface Risk {
   oldest_age_ms: number
 }
 
+/** Contract 8.4. Both blocks are absent on a v1.1 region: every consumer must cope with that. */
+export interface LoadStatus { writes_per_s: number; power: Power; batch: number; queue_depth: number }
+export interface RateStatus {
+  actor_burst: number
+  actor_refill_per_s: number
+  region_limit_per_s: number
+  refused_actor: number
+  refused_region: number
+}
+
+/** What `POST /admin/config` accepts and returns (contract 8.1). */
+export interface ConfigSet {
+  rate_actor_burst: number
+  rate_actor_refill_per_s: number
+  region_write_limit_per_s: number
+  power: Power
+}
+
 export interface Status {
   region: string
   level: Level
@@ -124,6 +145,8 @@ export interface Status {
   risk: Risk | null
   queues: { P0: number; P1: number; P2: number } | null
   carry: { received: number; new: number; dup: number; rejected: number } | null
+  load?: LoadStatus | null
+  rate?: RateStatus | null
 }
 
 export interface Healthz {
@@ -173,6 +196,9 @@ export interface RequestOptions {
   timeoutMs?: number
   /** which API key to send: officer (default), supervisor or admin */
   as?: Role
+  /** Whose allowance the write spends (a shopper's name). The simulator keeps one rate-limit bucket per actor; live mode
+   *  sends that shopper's own API key when VITE_SHOPPER_KEYS has one, and the officer key otherwise. */
+  actor?: string
 }
 
 /** The one seam between the UI/SDK and a backend. Mock = in-browser simulator, live = fetch. */

@@ -41,6 +41,8 @@ attribution lines, and no tool names, in commit messages, PR text, code comments
 - **Lane A branch: `a/akshit-main`** (kept). It was fast-forwarded to `main` after the final merge, so it equals `main` (`121b1ec`).
   The earlier Lane A branches `a/lane-a-basic-build`, `a/phase1-roles-history` and `a/post-merge-notes` are deleted (remote and local);
   everything in them was already on `main`. Simrit's `d/simrit` is merged into `main` (her branch is left in place).
+- **Scaling lane (master plan, contract v1.2): `a/akshit-scale`**, cut from `main` at `f765cc3`. Local commits only until the user says to
+  push. Its hand-off note, and what lanes B, C and D and the joining steps still have to do, is `docs/scale/a.md`.
 - There is an **untracked folder `frontend 2/`** in the repo root (someone's earlier generated incident-report dashboard,
   with `node_modules` inside). It is not part of this build: never `git add -A`; stage files by name.
 
@@ -171,3 +173,28 @@ Dev keys: `run_one.py` now provisions `dev-officer`, `dev-supervisor` and `dev-a
   **Finding for the team:** commit `8a07981` (Rahil, already on `main`) and five commits on `origin/lane-B-main-build` (`4270664 caf935f 808a342 2b7d8e0 4d964b2`) carry a `Co-Authored-By` trailer for an identity that is not a team member. Not rewritten here (it is shared history); needs a team decision before `lane-B-main-build` is merged.
 
 - 2026-10-13 — Fetched: `main` had nothing new. Continued Lane A on `a/akshit-main`. Found and fixed while exercising the console: (1) Prove it wrote everything through one node, so it never produced the disagreement it claims to test; it now creates a proof cart, isolates a node, changes the cart on both sides and reports the decisions waiting; (2) the console and simulator keyed CLOSE_VS_NEW_INFO on `relationship` and per-candidate `kind` that the real engine does not send (it sends `relationship: CONCURRENT`, `rule` and `flags`, close first), which would have broken the Review dialog on real nodes; both now follow the contract and the contract says so; a backend test pins the shape; (3) the failover counter ignored a probe-driven switch; (4) live mode could not resolve or cut links because `run_one.py` provisioned only `dev-officer`; it now provisions all three dev keys; (5) phone layout: chips, dialog, header. Whole repo `pytest tests` = 286 passed, 1 xfailed; web `tsc` clean, 57 tests, build OK; browser scenarios pass in mock and LIVE, light and dark. The experimental `frontend-new/` and `frontend 2/` folders are not mine and are never staged.
+
+- 2026-10-13 (scaling lane) — Master plan, Lane A, on `a/akshit-scale` (local, not pushed). Contract v1.2 is section 8 of `contracts/contracts.md`
+  (first commit of the lane). Backend: `region/api/ratelimit.py`, a token bucket per actor, off at 0, spent after the `op_id` replay check;
+  429 with the contract body and headers; `X-RateLimit-*` on accepted writes and replays; `ratelimit.snapshot()` for lane D's status block;
+  33 tests in `tests/api/test_ratelimit.py`. Console (`frontend-new/`): the simulator implements the whole contract (per-actor limit, 503 region
+  limit, power presets with a commit-queue model, load and rate status blocks, `POST /admin/config`, a fourth region); the SDK gained home
+  regions, per-region trust, a 503 that marks a region busy (back-off 2, 4, 5 s) instead of sleeping, a 429 that is an answer, a carry that sends only
+  what a region may be missing, and `routeFor()`; the console gained the meters and *Spam as*, *Limit this region*, home regions, the writes-per-second
+  bars, the power dial, *Add Bengaluru*, Burst / Spread with measured results, and the Scaling tab. Found while measuring: the simulator's own cost per
+  write grew with the load-test cart, so a thousand-write burst measured the host instead of the model (throughput fell from medium to high power and
+  from three to four regions); fixed with an event index per cart, cached digests and short-lived load carts, after which low / medium / high gives
+  74 / 328 / 494 writes a second and the same 1000 writes over 3 and 4 regions gives 961 and 1269. Also fixed: `LiveSystem.tsx` is CRLF in the repository, so
+  its line endings were kept to leave a readable diff. Checks: `pytest tests` passed (18 skips, the Node-only convergence tests); `npm test` 105 tests;
+  `npm run build` OK; browser: the simulator acceptance walk, live mode against the running v1.1 regions (degrades honestly), a 390 px phone width, and the
+  isolated real-backend test `.local/integration.cjs` (9 stages).
+  Then `origin/main` (lanes B, C and D, merged there while this lane was being built) was merged into `a/akshit-scale`: no conflicts. On the merged tree
+  `pytest tests` = 527 passed, 24 skipped; lane D's settings, `/admin/config`, status blocks (`rate.refused_actor` from `ratelimit.snapshot()`) and
+  per-shopper dev keys work with this lane's limiter as designed; lane B's `scale-result.json` is read by the Scaling tab exactly as it says (a test reads
+  the real file). Checked against three real region processes with lane D's gate installed before CORS: the real limiter refused Bob while Alice's meter
+  stayed full, the `X-RateLimit-*` headers are readable across CORS, the dial set and read the real batch, and a region limit moved the browser to Pune with
+  zero errors shown to shoppers; a 300-write burst took the same time at low and at high power on this laptop, as lane D found, and the console says so.
+  Found: lane D's `scale.install(app)` has to be called from `region/main.py` (this lane's file) before the CORS middleware, or the region limit and the power
+  dial do nothing; it is not in the dependent plan and not done here because `install` is not idempotent and lane D's test app calls it too (two calls halve the
+  region limit). Fixed: a refill of 0, which lane D's `/admin/config` accepts, was silently turned into 1 a second; it now means one burst and then nothing.
+  Left for the joining steps and lane D: `docs/scale/a.md`.
