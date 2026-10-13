@@ -79,6 +79,8 @@ export function createLiveChaos(url = env.VITE_CHAOS_URL || '/chaos'): Chaos {
     available: false,
     async crash(region) { const res = await timed(`${url}/crash/${region}`, { method: 'POST', headers: headers() }, 4000); if (!res.ok) throw new Error(`Crash refused (${res.status})`) },
     async start(region) { const res = await timed(`${url}/start/${region}`, { method: 'POST', headers: headers() }, 8000); if (!res.ok) throw new Error(`Restart refused (${res.status})`) },
+    async reset(region) { const res = await timed(`${url}/reset/${region}`, { method: 'POST', headers: headers() }, 15000); if (!res.ok) throw new Error(`Reset refused (${res.status})`) },
+    async resetAll() { const res = await timed(`${url}/reset-all`, { method: 'POST', headers: headers() }, 45000); if (!res.ok) throw new Error(`Reset refused (${res.status})`) },
     async state(): Promise<ChaosState | null> {
       try {
         const res = await timed(`${url}/state`, { headers: headers() }, 4000)

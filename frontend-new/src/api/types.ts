@@ -216,5 +216,9 @@ export interface Chaos {
   available: boolean
   crash(region: RegionId): Promise<void>
   start(region: RegionId): Promise<void>
+  /** One server back to a clean, healthy state (restarted, links healed). Its data is kept and re-syncs from peers. */
+  reset(region: RegionId): Promise<void>
+  /** Everything to zero: every region is stopped, its database deleted, and started again. */
+  resetAll(): Promise<void>
   state(): Promise<ChaosState | null>
 }

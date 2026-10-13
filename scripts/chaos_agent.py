@@ -4,6 +4,10 @@
 
     POST /crash/{region}   hard-kill the region process (SIGKILL; TerminateProcess on Windows)
     POST /start/{region}   start it again with scripts/run_one.py settings
+    POST /reset/{region}   put ONE server back to a clean, healthy state: stop it if it is running, start it again and
+                           heal every link it has. Its data is kept (it re-syncs from its peers): wiping one server
+                           alone would reuse its sequence numbers, which the system refuses on purpose.
+    POST /reset-all        everything to zero: stop every region, delete their databases together, start them again
     GET  /state            {regions: {mum: {up, pid, port, managed}, ...}}
     POST /tamper/{region}  {"mode": "edit" | "forge" | "reuse"}  inject a bad event through the peer path
                            and report whether it was quarantined and whether state changed
@@ -156,6 +160,91 @@ def crash(region: str, x_admin_key: str = Header(None)):
         time.sleep(0.05)
     (RUN_DIR / f"{region}.pid").unlink(missing_ok=True)
     return {"region": region, "was_running": True, "killed_pid": pid, "up": port_open(PORTS[region])}
+
+
+def _stop(region: str) -> bool:
+    """Hard-kill a running region and wait for its port to close. True if something was running."""
+    pid = region_pid(region)
+    if pid is None:
+        return False
+    hard_kill(pid)
+    child = _children.pop(region, None)
+    if child is not None:
+        try:
+            child.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            pass
+    end = time.time() + 5
+    while time.time() < end and port_open(PORTS[region]):
+        time.sleep(0.05)
+    (RUN_DIR / f"{region}.pid").unlink(missing_ok=True)
+    return True
+
+
+def _heal_links(region: str) -> None:
+    """Set every link between `region` and the other running regions back to up, in both directions (best effort:
+    link settings are stored in each node's database and survive a restart, so a cut would otherwise stay cut)."""
+    others = [r for r in REGIONS if r != region and port_open(PORTS[r])]
+    hdr = {"X-API-Key": "dev-admin"}
+    with httpx.Client(timeout=2.0) as c:
+        for peer in others:
+            for a, b in ((region, peer), (peer, region)):
+                try:
+                    c.post(f"http://127.0.0.1:{PORTS[a]}/admin/links/{b}", json={"mode": "up"}, headers=hdr)
+                except httpx.HTTPError:
+                    pass
+
+
+@app.post("/reset/{region}")
+def reset_region(region: str, x_admin_key: str = Header(None)):
+    require_admin(x_admin_key)
+    check_region(region)
+    was_running = _stop(region)
+    out = start(region, x_admin_key)
+    if out.get("up"):
+        _heal_links(region)
+    return {"region": region, "was_running": was_running, "up": out.get("up", False), "pid": out.get("pid"),
+            "data_kept": True}
+
+
+def _delete_db(region: str) -> bool:
+    """Remove a region's SQLite files. Retries briefly: Windows keeps the files locked for a moment after a kill."""
+    base = ROOT / "data"
+    ok = True
+    for suffix in ("", "-wal", "-shm"):
+        f = base / f"{region}.db{suffix}"
+        end = time.time() + 5
+        while f.exists():
+            try:
+                f.unlink()
+            except OSError:
+                if time.time() > end:
+                    ok = False
+                    break
+                time.sleep(0.1)
+    return ok
+
+
+@app.post("/reset-all")
+def reset_all(x_admin_key: str = Header(None)):
+    """Everything to zero. All the databases go together, so no region is left holding events that another has
+    forgotten (which is the only way sequence numbers could be reused)."""
+    require_admin(x_admin_key)
+    running = [r for r in REGIONS if port_open(PORTS[r])]
+    for r in REGIONS:
+        _stop(r)
+    failed = [r for r in REGIONS if not _delete_db(r)]
+    if failed:
+        raise HTTPException(500, f"could not delete the database of {', '.join(failed)}: is something holding the file?")
+    # bring back what was running; if nothing was, the default regions (an optional one only when it was running)
+    want = [r for r in REGIONS if r in running] or [r for r in REGIONS if r not in OPTIONAL_REGIONS]
+    want.sort(key=lambda r: r in OPTIONAL_REGIONS)   # optional regions join a mesh that is already up
+    started = []
+    for r in want:
+        out = start(r, x_admin_key)
+        if out.get("up"):
+            started.append(r)
+    return {"reset": True, "wiped": list(REGIONS), "started": started}
 
 
 @app.post("/start/{region}")

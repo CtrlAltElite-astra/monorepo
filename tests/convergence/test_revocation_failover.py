@@ -169,8 +169,10 @@ def test_losing_a_sidecar_keeps_local_session_checks_and_other_regions_login_wor
 
 def test_nothing_secret_leaks_into_events_or_responses(cluster, stack, make_wallet):
     w, m = member(stack, make_wallet, "Privacy Officer")
-    out = w.login(REGION_URL["mum"])
-    assert out["ok"]
+    # a credential issued a moment ago is unknown to the region until its sidecar's next status refresh
+    out = until(lambda: (lambda o: o if o["ok"] or o.get("error", {}).get("code") != "unknown_credential" else None)(
+        w.login(REGION_URL["mum"])), timeout=15, step=0.5)
+    assert out["ok"], out
     token = out["token"]
     r = cart(token, title="plain title", report_id="R-0e0e0e0e")
     assert r.status_code == 201
