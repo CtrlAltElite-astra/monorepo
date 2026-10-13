@@ -115,6 +115,10 @@ interface Demo {
   setLink(a: RegionId, b: RegionId, mode: 'up' | 'down' | 'slow'): Promise<void>
   crash(region: RegionId): Promise<void>
   start(region: RegionId): Promise<void>
+  /** one server back to a clean, healthy state: restarted, its links healed; its data is kept and re-syncs from peers */
+  resetRegion(region: RegionId): Promise<void>
+  /** everything to zero: every region wiped together and started again, and this page's session cleared */
+  resetAll(): Promise<void>
   tamper(region: RegionId): Promise<void>
   proveIt(): Promise<void>
   history(region: RegionId, reportId: string): Promise<EventEnvelope[] | null>
@@ -647,6 +651,30 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
     }
   }, [api, toast])
 
+  const resetRegion = useCallback(async (r: RegionId) => {
+    try {
+      await api.chaos.reset(r)
+      huntUntil.current = Date.now() + 30000
+      toast('info', `Resetting ${NODE_NAME[r]}: restarted clean with its links healed. It re-syncs whatever it missed from the other regions.`)
+    } catch {
+      toast('bad', 'The chaos agent did not answer (:9000).')
+    }
+  }, [api, toast])
+
+  const resetAll = useCallback(async () => {
+    try {
+      if (api.mode === 'live') {
+        toast('info', 'Resetting everything: every region is stopped, wiped together and started again. This takes a few seconds.')
+        await api.chaos.resetAll()
+        huntUntil.current = Date.now() + 30000
+      }
+      setEpoch(e => e + 1) // a new world: counters, outbox, carts and the session start from zero
+      toast('ok', 'Everything is back to zero. Start from scratch.')
+    } catch {
+      toast('bad', 'Reset did not complete. Is the chaos agent running on :9000?')
+    }
+  }, [api, toast])
+
   /**
    * Sign-in mode only: a REAL event, validly signed by its region, written for a shopper whose credential is then revoked,
    * handed to another region through /v1/carry by a different signed-in person. The region that has heard of the revocation
@@ -800,7 +828,7 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
   const value: Demo = {
     api, mode: api.mode, regions, members, optional, joined: joinedNow, sdk, sdkState, carryLog, snaps, review, last, presence, convergence, viewRegion, heals,
     chaosAvailable, chaosRunning, autoShoppers, setAutoShoppers, shopper, setShopper, cartFor, pending, saved, toasts, toast, dismissToast,
-    tamperRows, proveSteps, proveResult, proving, addToCart, removeFromCart, writeField, resolve, setLink, crash, start, burst, tamper, proveIt, history, reset,
+    tamperRows, proveSteps, proveResult, proving, addToCart, removeFromCart, writeField, resolve, setLink, crash, start, resetRegion, resetAll, burst, tamper, proveIt, history, reset,
     homeRegions, setHomeRegions, route, allowance, refusals, rate, rates, authMode, spamming, loading, loadRuns, spam, setShopperLimit, setRegionLimit, setPower,
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

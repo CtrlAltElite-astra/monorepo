@@ -373,6 +373,8 @@ export class SimChaos implements Chaos {
   constructor(private world: SimWorld) {}
   async crash(region: RegionId) { this.world.crash(region) }
   async start(region: RegionId) { if (!this.world.isJoined(region)) this.world.join(region); else this.world.restart(region) }
+  async reset(region: RegionId) { if (this.world.isJoined(region)) { this.world.crash(region); this.world.restart(region) } }
+  async resetAll() { /* the simulator is rebuilt by the console (demo.reset) */ }
   async state() {
     return { regions: Object.fromEntries(this.world.joined.map((r) => [r, { running: this.world.node(r).up, pid: null }])) }
   }

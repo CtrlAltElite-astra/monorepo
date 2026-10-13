@@ -28,7 +28,7 @@ export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void;
   const inFlight = useRef(new Set<string>())
   const justAdded = added[d.shopper] ?? ''
 
-  const scroller = useRef<HTMLElement>(null)
+  const scroller = useRef<HTMLDivElement>(null)
   const cartRef = useRef<HTMLElement>(null)
   const [cartVisible, setCartVisible] = useState(false)
 
@@ -80,7 +80,8 @@ export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void;
   const syncLabel = stale ? 'May be stale' : cart?.consistency.replication === 'REPLICATED' ? 'Synced' : 'Saved locally'
 
   return (
-    <aside className="cx-left" ref={scroller} aria-label="Shopping app">
+    <aside className="cx-left" aria-label="Shopping app">
+      <div className="cx-left-scroll" ref={scroller}>
       <header className="sp-head" data-reveal>
         <div className="sp-eyebrow">The storefront</div>
         <h1>Everyday essentials<span>.</span></h1>
@@ -107,8 +108,13 @@ export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void;
       <RateNote />
       <div id="identity-slot"><IdentityHost /></div> {/* renders nothing unless the backend is in sign-in mode */}
 
-      <div className="sp-filter" role="group" aria-label="Product category" data-reveal>
-        {CATEGORIES.map(c => <button key={c} className={category === c ? 'selected' : ''} onClick={() => setCategory(c)}>{c}</button>)}
+      <div className="sp-filter" data-reveal>
+        <label>
+          <span className="sp-filter-label">Show</span>
+          <select aria-label="Product category" value={category} onChange={e => setCategory(e.target.value)}>
+            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
         <span>{products.length} items</span>
       </div>
 
@@ -189,6 +195,7 @@ export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void;
         </div>
         {cart && <button className="sp-history" onClick={() => onHistory(cart.report_id)}><Icon name="history" size={16} />View cart history</button>}
       </section>
+      </div>
 
       <button className={`sp-cart-pill ${count > 0 && !cartVisible ? 'show' : ''}`} onClick={goToCart} tabIndex={count > 0 && !cartVisible ? 0 : -1} aria-label={`Go to ${d.shopper}'s cart`}>
         <Icon name="cart" size={18} /><span>{count} {count === 1 ? 'item' : 'items'}</span><strong>{rupees(cartTotal(items))}</strong><span className="sp-pill-go">View cart<Icon name="chevron" size={15} /></span>

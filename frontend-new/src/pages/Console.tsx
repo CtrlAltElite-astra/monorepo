@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { DemoProvider, useDemo } from '../state/demo'
 import type { RegionId } from '../api/types'
@@ -21,6 +21,17 @@ import { ScalingPanel } from '../components/ScalingPanel'
 import { HistoryDrawer } from '../components/HistoryDrawer'
 import { Toasts } from '../components/Toasts'
 
+const RESET_ALL_PROMPT = 'Reset everything?\n\nEvery region is stopped and its database deleted, then all are started again. All carts, events and counters go to zero.'
+
+// The shop sidebar's width: drag the divider (double-click or Home to go back to the default). Remembered per browser.
+const SIDEBAR_KEY = 'syncshield.sidebarWidth'
+const SIDEBAR_MIN = 300
+const sidebarMax = () => Math.max(SIDEBAR_MIN + 40, Math.min(760, Math.round(window.innerWidth * 0.6)))
+const clampSidebar = (w: number) => Math.round(Math.max(SIDEBAR_MIN, Math.min(w, sidebarMax())))
+function readSidebar(): number | null {
+  try { const v = Number(window.localStorage.getItem(SIDEBAR_KEY)); return v >= SIDEBAR_MIN ? clampSidebar(v) : null } catch { return null }
+}
+
 type Tab = 'carts' | 'network' | 'review' | 'outbox' | 'security' | 'metrics' | 'scaling' | 'api' | 'prove'
 function Workspace() {
   const d = useDemo()
@@ -29,6 +40,28 @@ function Workspace() {
   const [tab, setTab] = useState<Tab>(['carts', 'network', 'review', 'outbox', 'security', 'metrics', 'scaling', 'api', 'prove'].includes(initial || '') ? initial as Tab : 'carts')
   const [history, setHistory] = useState<{ region: RegionId; id: string } | null>(null)
   const scroll = useRef<HTMLElement>(null)
+  const split = useRef<HTMLDivElement>(null)
+  const [sidebar, setSidebar] = useState<number | null>(readSidebar)
+  useEffect(() => {
+    try { if (sidebar === null) window.localStorage.removeItem(SIDEBAR_KEY); else window.localStorage.setItem(SIDEBAR_KEY, String(sidebar)) } catch { /* private window: the width is just not remembered */ }
+  }, [sidebar])
+  const startDrag = (e: PointerEvent) => {
+    e.preventDefault()
+    const left = split.current?.getBoundingClientRect().left ?? 0
+    const move = (ev: globalThis.PointerEvent) => setSidebar(clampSidebar(ev.clientX - left))
+    const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); document.body.classList.remove('cx-resizing') }
+    document.body.classList.add('cx-resizing')
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', stop)
+  }
+  const nudge = (e: KeyboardEvent) => {
+    const current = sidebar ?? (split.current?.querySelector('.cx-left')?.getBoundingClientRect().width ?? 420)
+    if (e.key === 'ArrowLeft') setSidebar(clampSidebar(current - 24))
+    else if (e.key === 'ArrowRight') setSidebar(clampSidebar(current + 24))
+    else if (e.key === 'Home') setSidebar(null)
+    else return
+    e.preventDefault()
+  }
   const reviews = useReviewEntries().length
   const closeHistory = useCallback(() => setHistory(null), [])
   useEffect(() => { document.title = 'SyncShield — Live commerce console'; window.scrollTo(0, 0) }, [])
@@ -53,8 +86,10 @@ function Workspace() {
           <span className="cx-avatar" title={`Shopping as ${d.shopper}`}>{d.shopper[0]}</span>
         </div>
       </header>
-      <div className="cx-split">
+      <div className="cx-split" ref={split} style={sidebar ? ({ '--cx-left-w': `${sidebar}px` } as CSSProperties) : undefined}>
         <Shop onHistory={openHistory} onReview={() => inspect('review')} />
+        <div className="cx-resizer" role="separator" aria-orientation="vertical" aria-label="Resize the shop sidebar (drag, or use the arrow keys; Home resets)" tabIndex={0}
+          title="Drag to resize. Double-click to reset." onPointerDown={startDrag} onDoubleClick={() => setSidebar(null)} onKeyDown={nudge} />
         <main ref={scroll} className="cx-right">
           <div className="cx-head">
             <div>
@@ -65,6 +100,8 @@ function Workspace() {
             <div className="cx-head-right">
               <ConvergenceBadge />
               <label className="switch"><input type="checkbox" checked={d.autoShoppers} onChange={e => d.setAutoShoppers(e.target.checked)} /><i /><span>Auto-shoppers</span></label>
+              <button className="btn btn--sm cx-reset-all" disabled={d.mode === 'live' && !d.chaosAvailable} onClick={() => { if (window.confirm(RESET_ALL_PROMPT)) void d.resetAll() }}
+                title="Wipe every region together and start from scratch"><Icon name="refresh" size={15} />Reset everything</button>
             </div>
           </div>
           {d.mode === 'mock' && <div className="mode-note"><Icon name="flask" size={18} />Simulator mode. These are simulated regional responses. <a href="/demo">Switch to live backends</a></div>}

@@ -28,11 +28,18 @@
 .motion-toggle b { padding: 2px 8px; border-radius: 999px; background: var(--cx-green-bg); color: var(--cx-green-ink); font-size: 11.5px; }
 .motion-toggle[aria-pressed="false"] b { background: #eceae6; color: var(--cx-mute); }
 
-.cx-split { flex: 1; min-height: 0; display: grid; grid-template-columns: clamp(390px, 27vw, 500px) minmax(0, 1fr); }
+.cx-split { --cx-left-w: clamp(390px, 27vw, 500px); position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: var(--cx-left-w) minmax(0, 1fr); }
+/* drag handle between the shop and the live backend (the width is set from Console.tsx and remembered) */
+.cx-resizer { position: absolute; top: 0; bottom: 0; left: calc(var(--cx-left-w) - 5px); width: 10px; z-index: 6; cursor: col-resize; touch-action: none; }
+.cx-resizer::after { content: ''; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; background: transparent; transition: background .15s; }
+.cx-resizer:hover::after, .cx-resizer:focus-visible::after, body.cx-resizing .cx-resizer::after { background: var(--cx-ink); }
+body.cx-resizing { cursor: col-resize; user-select: none; }
 
 /* ---- left: the whole storefront is ONE smooth scroll ------------------------------------------------------------------ */
-.cx-left { position: relative; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; padding: 30px 26px 24px; background: #fff; border-right: 1px solid var(--cx-line); scrollbar-width: thin; scrollbar-color: #d4d5ce transparent; }
-.cx-left::-webkit-scrollbar { width: 9px; } .cx-left::-webkit-scrollbar-thumb { background: #d4d5ce; border-radius: 9px; border: 2px solid #fff; }
+.cx-left { position: relative; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: #fff; border-right: 1px solid var(--cx-line); }
+/* the scrolling part; the "view cart" bar below it is NOT on top of it, so it can never cover a product's text */
+.cx-left-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; scroll-padding: 12px 0 24px; padding: 30px 20px 24px 26px; scrollbar-width: thin; scrollbar-color: #d4d5ce transparent; }
+.cx-left-scroll::-webkit-scrollbar { width: 9px; } .cx-left-scroll::-webkit-scrollbar-thumb { background: #d4d5ce; border-radius: 9px; border: 2px solid #fff; }
 
 .sp-eyebrow, .cx-eyebrow { font-size: 11.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--cx-mute); }
 .sp-head h1 { margin: 8px 0 8px; font: 800 34px/1.1 Manrope, sans-serif; letter-spacing: -.03em; }
@@ -48,11 +55,12 @@
 .sp-avatar.avatar-0 { background: #5d8a63; } .sp-avatar.avatar-1 { background: #7c8aa3; } .sp-avatar.avatar-2 { background: #a98a6d; } .sp-avatar.avatar-3 { background: #8e7ca3; } .sp-avatar.avatar-4 { background: #b0826f; }
 .sp-avatar i { position: absolute; top: -5px; right: -7px; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 999px; display: grid; place-items: center; background: var(--cx-ink); color: #fff; font: 700 10.5px Manrope, sans-serif; border: 2px solid #fff; }
 
-.sp-filter { display: flex; align-items: center; gap: 22px; margin-bottom: 16px; border-bottom: 1px solid var(--cx-line); }
-.sp-filter button { position: relative; padding: 0 0 12px; border: 0; background: none; font-size: 14px; font-weight: 500; color: var(--cx-mute); cursor: pointer; transition: color .2s; }
-.sp-filter button.selected { color: var(--cx-ink); font-weight: 700; }
-.sp-filter button.selected::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px; background: var(--cx-ink); border-radius: 3px 3px 0 0; }
-.sp-filter span { margin-left: auto; padding-bottom: 12px; font-size: 14.5px; color: var(--cx-mute); }
+.sp-filter { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--cx-line); }
+.sp-filter label { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.sp-filter-label { font-size: 14px; color: var(--cx-mute); }
+.sp-filter select { min-width: 150px; padding: 8px 34px 8px 12px; border: 1.5px solid var(--cx-line); border-radius: 12px; background: #fff; font: 600 14.5px inherit; color: var(--cx-ink); cursor: pointer; }
+.sp-filter select:hover { border-color: #c9cac2; }
+.sp-filter > span { margin-left: auto; font-size: 14.5px; color: var(--cx-mute); }
 
 /* compact product rows: a small picture, a readable name and price, a big Add button */
 .sp-products { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
@@ -61,7 +69,7 @@
 .sp-thumb { width: 68px; height: 68px; border-radius: 14px; }
 .sp-info h3 { margin: 0 0 4px; font: 700 15.5px/1.25 Manrope, sans-serif; letter-spacing: -.01em; }
 .sp-info strong { font-size: 15px; font-weight: 600; color: var(--cx-ink-2); }
-.sp-add { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-width: 98px; height: 48px; padding: 0 16px; border: 0; border-radius: 14px; background: var(--cx-ink); color: #fff; font-size: 14px; font-weight: 650; cursor: pointer; transition: transform .15s, background .25s, box-shadow .25s; }
+.sp-add { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 74px; height: 36px; padding: 0 11px; border: 0; border-radius: 11px; background: var(--cx-ink); color: #fff; font-size: 13px; font-weight: 650; cursor: pointer; transition: transform .15s, background .25s, box-shadow .25s; }
 .sp-add:hover:not(:disabled) { background: #33372f; box-shadow: 0 8px 18px #1d1f1e30; transform: translateY(-1px); }
 .sp-add:active:not(:disabled) { transform: scale(.95); }
 .sp-add:disabled { opacity: .45; cursor: not-allowed; }
@@ -102,8 +110,9 @@
 .sp-history:hover { background: #ecece7; color: var(--cx-ink); }
 
 /* a pill that jumps to the cart while the cart is out of sight (it lives inside the same scroll) */
-.sp-cart-pill { position: sticky; bottom: 4px; width: 100%; margin-top: 14px; display: flex; align-items: center; gap: 12px; padding: 14px 18px; border: 0; border-radius: 18px; background: var(--cx-ink); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 14px 34px #1d1f1e40; opacity: 0; transform: translateY(24px) scale(.98); pointer-events: none; transition: opacity .3s, transform .35s cubic-bezier(.2, .9, .3, 1.2); }
-.sp-cart-pill.show { opacity: 1; transform: none; pointer-events: auto; }
+.sp-cart-pill { flex: none; display: none; align-items: center; gap: 12px; margin: 0 16px 14px 20px; padding: 12px 16px; border: 0; border-radius: 14px; background: var(--cx-ink); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 8px 22px #1d1f1e30; }
+.sp-cart-pill.show { display: flex; animation: pill-in .25s ease-out; }
+@keyframes pill-in { from { opacity: 0; transform: translateY(8px); } }
 .sp-cart-pill strong { margin-left: auto; font: 800 16px Manrope, sans-serif; }
 .sp-pill-go { display: inline-flex; align-items: center; gap: 3px; padding: 6px 10px; border-radius: 999px; background: #ffffff1f; font-size: 12.5px; }
 
@@ -248,14 +257,16 @@
   .cx-top nav { height: 48px; gap: 24px; order: 3; width: 100%; overflow-x: auto; }
   .cx-top-right .cx-workspace { display: none; }
   .cx-split { display: block; }
-  .cx-left { overflow: visible; border-right: 0; border-bottom: 8px solid var(--cx-soft); padding: 24px 18px 22px; }
+  .cx-left { display: block; overflow: visible; border-right: 0; border-bottom: 8px solid var(--cx-soft); }
+  .cx-left-scroll { overflow: visible; padding: 24px 18px 22px; }
+  .cx-resizer { display: none; }
   .cx-right { overflow: visible; padding: 26px 18px 0; }
   .sp-cart-pill { position: fixed; left: 14px; right: 14px; bottom: 14px; width: auto; z-index: 40; }
 }
 @media (max-width: 560px) {
   .sp-head h1 { font-size: 28px; } .cx-head h1 { font-size: 29px; }
   .sp-product { grid-template-columns: 64px minmax(0, 1fr) auto; gap: 12px; } .sp-thumb { width: 64px; height: 64px; }
-  .sp-add { min-width: 88px; padding: 0 14px; }
+  .sp-add { min-width: 70px; padding: 0 11px; }
   .cx-board { padding: 18px; } .rc { padding: 20px; }
   .cx-flow { gap: 16px; } .cx-flow ol { margin-left: 0; }
   .cx-route { margin-left: 0; }
@@ -291,7 +302,7 @@
 .landing-cta .btn--lg { min-height: 62px; padding-inline: 32px; font-size: 17px; }
 .landing-footer { font-size: 16px; color: #5d615b; }
 
-@media (max-width: 1500px) { .cx-left { padding: 26px 22px 22px; } .sp-head h1 { font-size: 30px; } .rc { padding: 20px; } .rc h3 { font-size: 22px; } .rc-numbers strong { font-size: 30px; } }
+@media (max-width: 1500px) { .cx-left-scroll { padding: 26px 16px 22px 22px; } .sp-head h1 { font-size: 30px; } .rc { padding: 20px; } .rc h3 { font-size: 22px; } .rc-numbers strong { font-size: 30px; } }
 
 /* ---- remaining small print: nothing below 13.5 px ------------------------------------------------------------------------ */
 .cx-app .muted, .ss-landing .muted { font-size: max(14px, .9em); }
@@ -337,4 +348,7 @@
 .cx-app .rc-cart > span { font-size: 16px; }
 .cx-app .sp-cart-items small { font-size: 14.3px; }
 .cx-app .sp-total small { font-size: 14.75px; }
-.sp-filter button { font-size: 16px; }
+.sp-filter select { font-size: 15.5px; }
+
+/* reset buttons: one per region card, and one for everything in the console header */
+.cx-reset-all { border-color: color-mix(in srgb, var(--cx-red, #b96152) 40%, transparent); color: var(--cx-red, #b96152); }
