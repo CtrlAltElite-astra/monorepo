@@ -137,27 +137,150 @@ opt-in wallet sign-in. Screenshots of the current UI are still to be added (see 
 <!-- END:demo -->
 
 <!-- BEGIN:setup owner=C -->
-## Stack and setup
+## Stack and how to run it
 
-Python 3.11+, FastAPI, SQLite (WAL, one file per node), httpx, React + Vite + TypeScript. Needs Node 18+ (Node 24+ for the
-sign-in mode).
+**Stack:** Python 3.11+, FastAPI, SQLite (WAL, one file per node), httpx, React + Vite + TypeScript.
 
-```bash
+Everything runs on your own machine: three region servers (Mumbai, Pune, Delhi), a small crash controller that can kill and restart
+them, and the web console. You open **three terminals**: terminals 1 and 2 in the repository root (the folder that contains this
+README) and terminal 3 in `frontend-new`. The commands are given for Windows PowerShell and for macOS / Linux shells (bash, zsh); they
+were tested on Windows, and the backend tests also run on Linux in CI.
+
+**You need:** Git, Python 3.11 or newer, and Node.js 18 or newer (Node.js 24 or newer only for the optional sign-in mode below).
+
+### 1. One-time setup
+
+Skip this if the project is already set up on your machine.
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/CtrlAltElite-astra/monorepo.git    # the repository is private: sign in to GitHub when asked
+cd monorepo
 python -m venv .venv
-.venv\Scripts\activate            # Windows   (Linux/macOS: source .venv/bin/activate)
-pip install -r requirements.txt   # add -r requirements-auth.txt for the optional sign-in mode and its tests
-
-# 1. the crash controller; it also starts the regions (Bengaluru is listed but only joins when you add it)
-set REGIONS=mum,pun,del,blr       # PowerShell: $env:REGIONS='mum,pun,del,blr'   bash: export REGIONS=mum,pun,del,blr
-python scripts/chaos_agent.py     # :9000 (dev only)
-# then start each region once:   curl -X POST -H "X-Admin-Key: dev-admin" http://127.0.0.1:9000/start/mum   (pun, del)
-# or, without crash controls:    python scripts/run_regions.py mum pun del
-
-# 2. the demo frontend
+.\.venv\Scripts\Activate.ps1      # if PowerShell refuses: Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+pip install -r requirements.txt
 cd frontend-new
 npm install
-npm run dev                       # http://localhost:5175  (console: /demo, simulator: /demo?mode=mock)
+cd ..
 ```
+
+macOS / Linux:
+
+```bash
+git clone https://github.com/CtrlAltElite-astra/monorepo.git
+cd monorepo
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+(cd frontend-new && npm install)
+```
+
+What you should see: `(.venv)` at the start of the prompt once the environment is active, `Successfully installed ...` at the end of
+`pip install`, and a line like `added N packages ...` at the end of `npm install` (an audit notice is fine; `npm install` may rewrite
+`frontend-new/package-lock.json`, which you do not need to commit).
+
+### 2. Start it
+
+**Terminal 1: the crash controller** (repository root). It keeps running and prints nothing, because it only logs warnings.
+
+```powershell
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+$env:REGIONS = "mum,pun,del,blr"
+python scripts/chaos_agent.py
+```
+
+```bash
+# macOS / Linux
+source .venv/bin/activate
+export REGIONS=mum,pun,del,blr
+python scripts/chaos_agent.py
+```
+
+Set `REGIONS` in this same terminal, before the last line. `blr` is Bengaluru: it is listed but not started, and it joins when you
+press **Add Bengaluru** in the console (the button stays greyed out if `blr` is missing from `REGIONS`). Do not set `AUTH_ENABLED`
+here: that switches the regions into the optional sign-in mode.
+
+**Terminal 2: start the three regions** (a new terminal, repository root; no virtual environment needed).
+
+```powershell
+# Windows PowerShell
+foreach ($r in "mum","pun","del") { curl.exe -s -X POST -H "X-Admin-Key: dev-admin" "http://127.0.0.1:9000/start/$r"; Write-Host }
+```
+
+```bash
+# macOS / Linux
+for r in mum pun del; do curl -s -X POST -H "X-Admin-Key: dev-admin" http://127.0.0.1:9000/start/$r; echo; done
+```
+
+Each region answers within a few seconds (the `pid` is different every time):
+
+```
+{"region":"mum","already_running":false,"pid":26036,"up":true}
+{"region":"pun","already_running":false,"pid":19756,"up":true}
+{"region":"del","already_running":false,"pid":37528,"up":true}
+```
+
+Check one of them: `curl http://127.0.0.1:8001/healthz` (on Windows PowerShell write `curl.exe`) prints
+`{"region":"mum","ok":true,"level":"HEALTHY","ts":...}`. For the first few seconds the level can say `ISOLATED` while the regions find
+each other. Ports 8002 and 8003 answer for `pun` and `del`.
+
+**Terminal 3: the web console** (a third terminal, folder `frontend-new`).
+
+```powershell
+# Windows PowerShell
+cd frontend-new
+$env:VITE_SHOPPER_KEYS = "Alice=dev-alice,Bob=dev-bob,Chitra=dev-chitra,Dev=dev-dev,Esha=dev-esha"
+npm run dev
+```
+
+```bash
+# macOS / Linux
+cd frontend-new
+export VITE_SHOPPER_KEYS=Alice=dev-alice,Bob=dev-bob,Chitra=dev-chitra,Dev=dev-dev,Esha=dev-esha
+npm run dev
+```
+
+(`cd frontend-new` assumes the new terminal opened in the repository root; otherwise go to that folder first.) You should see:
+
+```
+> syncshield-frontend-new@1.1.0 dev
+> vite
+
+  VITE v5.4.21  ready in 1605 ms
+
+  ➜  Local:   http://127.0.0.1:5175/
+```
+
+The version and timing may differ. Red `http proxy error: /healthz ... ECONNREFUSED 127.0.0.1:8004` lines every few seconds are normal
+until Bengaluru is added: the console is checking whether it has joined yet. `VITE_SHOPPER_KEYS` gives each shopper their own
+"requests left" meter; without it every shopper shares one allowance. Leave this terminal open.
+
+### 3. Open it
+
+Open **http://localhost:5175/demo**. You should see the shop on the left and, on the right, "Live backend" with **3 of 3 regions
+reachable**, a green **CONVERGED** badge, the Mumbai, Pune and Delhi cards, and a Bengaluru card that says "Not joined" with an **Add
+Bengaluru** button. The landing page is `http://localhost:5175/`. `http://localhost:5175/demo?mode=mock` runs the console against an
+in-browser simulator, so terminal 3 alone is enough to look at the interface.
+
+### 4. Stop, reset, troubleshoot
+
+- **Stop:** press Ctrl+C in terminal 3 and then terminal 1. If a port is still busy afterwards (5175, 9000 or 8001 to 8004), stop what
+  holds it. Windows PowerShell (touches only those ports):
+  `Get-NetTCPConnection -State Listen -LocalPort 5175,9000,8001,8002,8003,8004 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }`.
+  macOS / Linux: find the process with `lsof -i :8001` and stop it with `kill <pid>`.
+- **Reset to zero:** click **Reset everything** in the console, or stop the servers and delete the databases (Windows PowerShell:
+  `Remove-Item data\*.db*`, macOS / Linux: `rm data/*.db*`). Without a reset, data survives restarts.
+- **Terminal 2 says `unknown region`:** `REGIONS` was not set in terminal 1. Set it and start terminal 1 again.
+- **The console says "The chaos agent did not answer (:9000)":** terminal 1 is not running. Start it again.
+- **A region shows as unreachable or UNKNOWN:** the start commands in terminal 2 were not run, or an old process holds the port. Stop it
+  (see above) and repeat step 2.
+- **Add Bengaluru is greyed out:** `REGIONS` in terminal 1 did not include `blr`.
+- **Without the crash and restart buttons**, one terminal can start the three regions instead of terminals 1 and 2: with the virtual
+  environment active, in the repository root, run `python scripts/run_regions.py mum pun del` (Ctrl+C stops them all).
+
+### Ports, keys and settings
 
 | what | port | notes |
 |---|---|---|
@@ -174,17 +297,21 @@ allowance. All settings come from environment variables (see `.env.example`), an
 `POST /admin/config` (the console does exactly that). Run **exactly one** Uvicorn worker per node: sequence numbers are
 guarded by an in-process lock. To reset the demo, stop the regions and delete `data/*.db*`.
 
-### Sign-in mode (TRUE credentials)
+### Sign-in mode (TRUE credentials, optional)
 
-```bash
-cd collaboration/true && npm install                  # once, Node 24+
-pip install -r requirements-auth.txt                  # once (PyJWT)
-python scripts/true_stack.py up --provision           # issuer :4001, sidecars :4101-4103; prints one-time claim codes
-python scripts/true_stack.py relay                    # optional: lets the console's "Revoke this shopper" button work
-set AUTH_ENABLED=true                                 # then start the chaos agent / regions in that shell
-python scripts/chaos_agent.py                         # (regions it starts pick up their sidecar settings)
-cd frontend-new && set VITE_AUTH_ENABLED=1 && npm run dev   # paste the claim codes into the identity section
-```
+This replaces the API keys with the partner team's credential sign-in. It needs Node.js 24 or newer and starts more processes (an issuer
+and one small auth helper per region), so it uses more terminals. Stop the normal-mode servers first: both modes use the same ports.
+
+1. Once, from the repository root with the virtual environment active: `pip install -r requirements-auth.txt`. Then `cd collaboration/true`,
+   run `npm install`, and go back to the repository root.
+2. `python scripts/true_stack.py up --provision` starts the issuer (:4001) and the auth helpers (:4101 to :4103), prints one-time claim
+   codes for the demo members (each code works once), and returns to the prompt.
+3. Optional, in its own terminal: `python scripts/true_stack.py relay`. It makes the console's "Revoke this shopper" button work.
+4. Terminal 1 as in step 2 above, but set `AUTH_ENABLED=true` and use `REGIONS=mum,pun,del` before `python scripts/chaos_agent.py`
+   (Windows PowerShell: `$env:AUTH_ENABLED = "true"`; macOS / Linux: `export AUTH_ENABLED=true`). Then start the three regions in terminal 2
+   exactly as before; they pick up their auth helper settings.
+5. Terminal 3 as above, but also set `VITE_AUTH_ENABLED=1` before `npm run dev` (Windows PowerShell: `$env:VITE_AUTH_ENABLED = "1"`;
+   macOS / Linux: `export VITE_AUTH_ENABLED=1`). In the console, paste the claim codes into the identity section.
 
 Start **all** the regions you want before using the console in this mode: adding a region at runtime needs an admin session.
 
