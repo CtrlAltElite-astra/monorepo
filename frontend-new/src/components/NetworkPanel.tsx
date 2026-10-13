@@ -112,7 +112,7 @@ export function NetworkPanel() {
           </p>
         )}
 
-        <p className="muted small">Burst writes real cart notes to {NODE_NAME[aim]} as fast as it takes them and times how long every region needs to agree. Spread divides the same writes over all {ids.length} regions. Spam sends 25 quick adds as {d.shopper}. Tamper sends three forged events to {NODE_NAME[aim]} through the carry door: all must be rejected and the state must not move. Results are in the Security and Scaling tabs.</p>
+        <p className="muted small">Burst writes real cart notes to {NODE_NAME[aim]} as fast as it takes them and times how long every region needs to agree. Spread divides the same writes over all {ids.length} regions. Spam sends 25 quick adds as {d.shopper}. Tamper sends three forged events to {NODE_NAME[aim]} through the carry door: all must be rejected and the state must not move. Results are in the Security tab and the Evidence view.</p>
       </section>
 
       <section>

@@ -27,6 +27,11 @@ export type Shopper = (typeof SHOPPERS)[number]
 
 /** Each shopper's home region: where their requests go first (master plan H2). The fixed failover order is the fallback. */
 export const HOME_REGION: Record<Shopper, RegionId> = { Alice: 'mum', Bob: 'mum', Chitra: 'pun', Dev: 'pun', Esha: 'del' }
+/** With Bengaluru in the mesh the five shoppers spread over four regions: this is how added capacity takes load. */
+export const HOME_REGION_WITH_BLR: Record<Shopper, RegionId> = { Alice: 'mum', Bob: 'pun', Chitra: 'del', Dev: 'blr', Esha: 'blr' }
+export function homeOf(who: Shopper, joined: readonly RegionId[]): RegionId {
+  return joined.includes('blr') ? HOME_REGION_WITH_BLR[who] : HOME_REGION[who]
+}
 
 /** An item for adults only. It is NOT in PRODUCTS (auto-shoppers and the seed never pick it) and it is hidden unless the flag is on:
  *  the claim check that refuses it belongs to the identity lane and joins in the dependent plan (J4). */

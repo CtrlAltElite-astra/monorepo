@@ -16,6 +16,8 @@ export type IdentityPanelProps = {
   session: Omit<IdentitySession, 'token' | 'regionUrl'> | null
   revoked?: boolean                                 // the shopper's credential was revoked (sessions now refused)
   busy?: boolean
+  /** the credential is issued automatically on first sign-in, so sign-in is allowed while the wallet is still empty */
+  onboard?: boolean
   error?: string | null
   now?: number                                      // ms; omit to tick with the wall clock
   onSignIn?: (claim: Claim | null) => void
@@ -43,7 +45,7 @@ function show(value: unknown): string {
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 
 export function IdentityPanel(props: IdentityPanelProps) {
-  const { shopper, holds, session, revoked, busy, error, onSignIn, onSignOut, onRevoke } = props
+  const { shopper, holds, session, revoked, busy, error, onboard, onSignIn, onSignOut, onRevoke } = props
   const now = useNow(props.now)
   const [ask, setAsk] = useState<Claim | ''>('age_over_18')
   const left = secondsLeft(session, now)
@@ -68,7 +70,7 @@ export function IdentityPanel(props: IdentityPanelProps) {
             {CLAIMS.map((c) => <option key={c} value={c}>{label(c)}</option>)}
           </select>
         </label>
-        <button className="btn btn--sm btn--primary" disabled={busy || !holds || revoked || !onSignIn}
+        <button className="btn btn--sm btn--primary" disabled={busy || (!holds && !onboard) || revoked || !onSignIn}
           onClick={() => onSignIn?.(ask || null)}>{live ? 'Sign in again' : 'Sign in with wallet'}</button>
         {live && onSignOut && <button className="btn btn--sm btn--ghost" disabled={busy} onClick={onSignOut}>Sign out</button>}
         <button className="btn btn--sm btn--bad idp__revoke" disabled={busy || revoked || !onRevoke || !session}
@@ -87,7 +89,7 @@ export function IdentityPanel(props: IdentityPanelProps) {
                 </li>
               ))}
             </ul>
-          ) : <p className="muted small">No credential in this wallet yet.</p>}
+          ) : <p className="muted small">{onboard ? 'Issued automatically the first time you sign in.' : 'No credential in this wallet yet.'}</p>}
         </div>
 
         <div className="idp__col">

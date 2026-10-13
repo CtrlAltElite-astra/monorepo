@@ -82,7 +82,8 @@ Isolated test ports: issuer 14001/14201/24001, sidecars 14101…/14301…, regio
 ## 4. Session lifecycle
 
 1. **Claim (once).** An admin registers a member at the issuer and gets a one-time claim code. The member's
-   wallet redeems it with a holder proof. The issuer returns an SD-JWT VC containing exactly four claims:
+   wallet redeems it with a holder proof. (In the console nobody handles the code: the demo relay `true_stack.py up` starts mints
+   one when a member first signs in, and the wallet redeems it at once. The code still goes through the real flow below.) The issuer returns an SD-JWT VC containing exactly four claims:
    `actor_id`, `syncshield_member`, `syncshield_role`, `credential_id`. No name, date of birth, address, photo
    or student number.
 2. **Challenge.** The wallet asks a region for a challenge. The **region** chooses the nonce, the audience
@@ -237,9 +238,10 @@ endpoint path is proven with real processes; the form itself is unchanged from b
 ```bash
 cd collaboration/true && npm install            # once, Node 24+
 pip install -r requirements-auth.txt            # once (PyJWT)
-python scripts/true_stack.py up --provision     # issuer :4001, sidecars :4101-4103, prints one-time claim codes
+python scripts/true_stack.py up                 # issuer :4001, sidecars :4101-4103, demo relay :4090 (issues credentials, revokes)
 AUTH_ENABLED=true python scripts/run_one.py mum # same for pun, del (reads the values from true_stack)
-cd dashboard && VITE_AUTH_ENABLED=1 npm run dev # paste the claim codes into "Sign in with TRUE"
+cd frontend-new && VITE_AUTH_ENABLED=1 npm run dev   # open /demo and press "Sign in everyone" (no claim codes to paste)
+                                                        # (the old dashboard/ still asks for claim codes: python scripts/true_stack.py provision)
 python scripts/true_stack.py revoke Bob         # watch Bob's next request get 401 credential_revoked
 python scripts/true_stack.py down
 ```

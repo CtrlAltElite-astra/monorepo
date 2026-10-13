@@ -7,8 +7,8 @@
 // One-off setup:  npm install --no-save puppeteer-core     (and Chrome or Edge; set CHROME to its path if it is not found)
 // Prerequisites (see README, "Run the browser test"): the regions and the chaos agent running (REGIONS=mum,pun,del,blr) on a
 // CLEAN data folder, and the console started with VITE_SHOPPER_KEYS (keys mode) or VITE_AUTH_ENABLED=1 (auth mode).
-// Auth mode also needs the claim codes: save the block that `python scripts/true_stack.py up --provision` prints in
-// CLAIM_CODES_FILE (default .local/codes.txt). Each code works once, so a second auth run needs a new provision.
+// Auth mode needs `python scripts/true_stack.py up` running (it also starts the demo relay that issues each member's
+// credential on first sign-in); there are no claim codes to paste.
 //
 // Every assertion is a real browser action followed by a real answer from a region; nothing is simulated.
 const fs = require('node:fs')
@@ -177,8 +177,6 @@ async function keysMode(browser) {
 
 // ---------------------------------------------------------------------------------------------------------------
 async function authMode(browser) {
-  const codesFile = process.env.CLAIM_CODES_FILE || path.join(__dirname, '..', '..', '.local', 'codes.txt')
-  const codes = fs.existsSync(codesFile) ? fs.readFileSync(codesFile, 'utf8') : ''
   const ctx = browser.defaultBrowserContext()   // one wallet (IndexedDB) shared by both windows, like two tabs of one browser
   const page = await newPage(browser)
   await page.goto(BASE + '/demo', { waitUntil: 'domcontentloaded' })
@@ -187,18 +185,14 @@ async function authMode(browser) {
   if (!idHost) return
   const start = (await status('mum'))?.event_count ?? 0
 
-  // claim codes -> wallet -> sign in as everyone
-  if (!(await text(page)).includes('credentials in this wallet') || /No credentials/.test(await text(page))) {
-    if (!codes.trim()) { check('claim codes are available (.local/codes.txt)', false, 'run `python scripts/true_stack.py up --provision` and save its block'); return }
-    const area = await page.$('textarea[aria-label="Claim codes"]')
-    await area.type(codes)
-    await btn(page, 'Add to wallet')
-  }
-  check('claim codes become credentials in the wallet', await until(async () => /7 of 7 credentials in this wallet/.test(await text(page)), 30000))
+  // no wallet box and no claim codes: the first sign-in issues each member's credential by itself
+  check('there is no wallet box and no claim-code field to fill in', !(await page.$('textarea[aria-label="Claim codes"]')) && !/claim code/i.test(await text(page)))
   await btn(page, 'Sign in everyone')
-  const signedIn = await until(async () => (await text(page)).includes('signed in as Alice'), 60000)
+  // wait until the whole "Sign in everyone" run has finished (the button is enabled again), not just Alice's part of it
+  await until(async () => page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((e) => e.textContent.trim() === 'Sign in everyone'); return b && !b.disabled }), 120000, 500)
+  const signedIn = await until(async () => (await text(page)).includes('signed in as Alice'), 10000)
   if (!signedIn) { const t = await text(page); const i = t.indexOf('Identity of'); console.log('  [identity panel]', JSON.stringify(t.slice(i, i + 700))) }
-  check('every member signs in with a real SD-JWT presentation', signedIn)
+  check('every member signs in with a real SD-JWT presentation (credentials issued automatically)', signedIn)
   await sleep(2500)
 
   // --- a restricted item without the claim: denied, nothing stored --------------------------------------------------
@@ -230,16 +224,16 @@ async function authMode(browser) {
   check('Bob signs in again from a second window (same credential, new session)', await until(async () => (await text(window2)).includes('signed in as Bob'), 40000))
   await openNetwork(page)
   await (await inRow(page, 'Limit each shopper', '5')).click(); await sleep(2000)   // changed through the Admin session, not an API key
-  await pickShopper(page, 'Bob'); await btn(page, 'Spam as Bob')           // window 1 spends Bob's whole allowance...
-  await sleep(1200)
+  await pickShopper(page, 'Bob')
   const s3 = window2.seen.length
-  for (let i = 0; i < 3; i++) { await btn(window2, 'Add Backpack'); await sleep(300) }   // ...while window 2 (same credential) adds
+  await btn(page, 'Spam as Bob')                                              // window 1 spends Bob's whole allowance...
+  await btn(window2, 'Add Backpack')                                          // ...and window 2 (same credential) adds right away
   await sleep(1500)
   await until(async () => !(await text(page)).includes('is spamming'), 60000, 500)
   const refusedBob = page.seen.filter((r) => r.status === 429).length
   check('Bob is refused once his allowance is spent (window 1)', refusedBob > 0, `${refusedBob} refusals`)
-  const again = window2.seen.slice(s3).filter((r) => r.status === 429).length
-  check('window 2, same credential, is refused too: the limit follows the person, not the device', again > 0, `${again} refusals in window 2`)
+  const first = window2.seen.slice(s3).find((r) => /\/notes|\/v1\/reports/.test(r.url))
+  check('window 2, same credential, is refused too: the limit follows the person, not the device', first && first.status === 429, first ? `first add in window 2 answered ${first.status}` : 'no add seen')
   await window2.close()
   await openNetwork(page)
   await (await inRow(page, 'Limit each shopper', 'Off')).click(); await sleep(1500)

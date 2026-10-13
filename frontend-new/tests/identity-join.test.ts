@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createLiveTransport } from '../src/api/liveClient'
 import type { IdentitySession } from '../src/identity/client'
 import {
-  PERSONAS, liveSessions, markRevoked, parseClaimBlock, resetSessions, sessionOf, setBearerMode, setSession, tokenFor,
+  PERSONAS, liveSessions, markRevoked, resetSessions, sessionOf, setBearerMode, setSession, tokenFor,
 } from '../src/identity/session'
 
 const NOW = () => Math.floor(Date.now() / 1000)
@@ -84,15 +84,7 @@ describe('the live transport in sign-in mode', () => {
   })
 })
 
-describe('claim codes', () => {
-  it('reads the block `true_stack.py up --provision` prints, one persona per line', () => {
-    const got = parseClaimBlock('Alice: STDRX642\nBob: RZ9VMKH3\nSunita: K4PT7225\nAdmin: R63DHAKA\nnoise line\nMallory: ZZZZZZZZ')
-    expect(got).toEqual([
-      { persona: 'Alice', code: 'STDRX642' }, { persona: 'Bob', code: 'RZ9VMKH3' },
-      { persona: 'Sunita', code: 'K4PT7225' }, { persona: 'Admin', code: 'R63DHAKA' },
-    ])
-  })
-
+describe('the demo members', () => {
   it('knows every demo member and the name the issuer uses for it', () => {
     expect(PERSONAS.map((p) => p.name)).toEqual(['Alice', 'Bob', 'Chitra', 'Dev', 'Esha', 'Sunita', 'Admin'])
     expect(PERSONAS.find((p) => p.name === 'Sunita')).toMatchObject({ role: 'supervisor', member: 'Sunita (supervisor)' })

@@ -73,12 +73,16 @@ export function createLiveTransport(raw = env.VITE_REGION_URLS || DEFAULT_REGION
   }
 }
 
+async function reason(res: Response): Promise<string> {
+  try { const d = (await res.json())?.detail; return typeof d === 'string' ? d : '' } catch { return '' }
+}
+
 export function createLiveChaos(url = env.VITE_CHAOS_URL || '/chaos'): Chaos {
   const headers = () => ({ 'X-Admin-Key': keys().admin })
   const chaos: Chaos = {
     available: false,
     async crash(region) { const res = await timed(`${url}/crash/${region}`, { method: 'POST', headers: headers() }, 4000); if (!res.ok) throw new Error(`Crash refused (${res.status})`) },
-    async start(region) { const res = await timed(`${url}/start/${region}`, { method: 'POST', headers: headers() }, 8000); if (!res.ok) throw new Error(`Restart refused (${res.status})`) },
+    async start(region) { const res = await timed(`${url}/start/${region}`, { method: 'POST', headers: headers() }, 8000); if (!res.ok) throw new Error(`Restart refused (${res.status}) ${await reason(res)}`.trim()) },
     async state(): Promise<ChaosState | null> {
       try {
         const res = await timed(`${url}/state`, { headers: headers() }, 4000)

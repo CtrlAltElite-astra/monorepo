@@ -153,7 +153,7 @@ export function RegionCards() {
           )
         })}
         {d.optional.map(r => {
-          const startedAt = marks[r.id]?.startAt
+          const startedAt = marks[r.id]?.startAt ?? d.startedAt[r.id]
           const starting = !!startedAt && now - startedAt < 30000
           const known = d.mode === 'mock' || r.id in d.chaosRunning // the real chaos agent only starts regions it was told about (REGIONS=...,blr)
           const reason = !d.chaosAvailable ? 'Adding a region needs the local chaos agent' : !known ? `Start the chaos agent with REGIONS=mum,pun,del,${r.id}` : ''
@@ -173,6 +173,7 @@ export function RegionCards() {
                 </button>
               </footer>
               {reason && <p className="rc-hint">{reason}</p>}
+              {d.autoscale && d.mode === 'live' && !reason && <p className="rc-hint">Autoscale is on: {r.name} starts by itself when the regions are over their capacity (low 0.2, medium 1, high 4 writes a second each: a demo policy).</p>}
             </article>
           )
         })}

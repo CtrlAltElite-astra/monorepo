@@ -62,15 +62,3 @@ export function tokenFor(opts: { actor?: string; as?: string }): string | null {
   const pick = all.find((x) => x.session.role === 'supervisor') ?? all.find((x) => x.session.role === 'admin') ?? all[0]
   return pick?.session.token ?? null
 }
-
-/** "Alice: CODE" lines, as printed by `python scripts/true_stack.py up --provision`. */
-export function parseClaimBlock(text: string): { persona: string; code: string }[] {
-  const out: { persona: string; code: string }[] = []
-  for (const line of text.split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Za-z]+)[^:A-Za-z]*:\s*([A-Za-z0-9-]{6,})\s*$/)
-    if (m && PERSONAS.some((p) => p.name.toLowerCase() === m[1].toLowerCase())) {
-      out.push({ persona: PERSONAS.find((p) => p.name.toLowerCase() === m[1].toLowerCase())!.name, code: m[2] })
-    }
-  }
-  return out
-}

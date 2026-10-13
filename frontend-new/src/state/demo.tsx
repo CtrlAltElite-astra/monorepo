@@ -7,7 +7,7 @@ import { revokeShopper } from '../identity/client'
 import { PERSONAS, RELAY_URL, bearerModeOn, liveSessions, markRevoked, sessionOf, setBearerMode } from '../identity/session'
 import type { CarryResult, ConfigSet, EventEnvelope, HttpResult, Level, Mode, Power, RegionId, RegionInfo, ReportView, ReviewItem, Role, Status } from '../api/types'
 import { NetworkError } from '../api/types'
-import { addNoteText, HOME_REGION, isDone, PRODUCTS, SHOPPERS, type Product, type Shopper } from '../domain/shop'
+import { addNoteText, homeOf, isDone, PRODUCTS, SHOPPERS, type Product, type Shopper } from '../domain/shop'
 import { allowanceFrom, type Allowance } from '../lib/allowance'
 import { canonical, newReportId, sleep, uuid } from '../lib/util'
 import { OPTIONAL_REGIONS, SyncShieldClient, type CarryNote, type Route, type SdkState } from '../sdk/syncshieldClient'
@@ -44,6 +44,12 @@ const LOAD_CART_SIZE = 200
 /** how many quick requests "Spam as" sends */
 const SPAM_COUNT = 25
 const CHAI = PRODUCTS.find((p) => p.sku === 'CHAI-01')!
+/** Autoscale policy (a demo policy, not a measured hardware limit): the writes a second one region of each power is meant to carry.
+ *  When the regions' measured writes a second stay above their combined capacity for a few seconds, the next region starts by itself.
+ *  The load is measured by the regions (status.load.writes_per_s); only the capacity per power is chosen. (Measured on this laptop a
+ *  region takes about 60 writes a second whatever its power; see docs/tr-log.md.) */
+export const AUTOSCALE_CAPACITY: Record<Power, number> = { low: 0.2, medium: 1, high: 4 }
+const AUTOSCALE_WINDOW = 5 // seconds of readings averaged before it acts
 
 interface Demo {
   api: Api
@@ -94,6 +100,11 @@ interface Demo {
   /** writes per second each region reports (status.load), or measures from its own write counter when it does not report it */
   rates: Partial<Record<RegionId, number>>
   authMode: boolean
+  /** start the next region by itself when the regions are over their capacity (see AUTOSCALE_CAPACITY) */
+  autoscale: boolean
+  setAutoscale(v: boolean): void
+  /** when each region was last asked to start, so a card shows "Starting" for an automatic start too */
+  startedAt: Partial<Record<RegionId, number>>
   spamming: Shopper | null
   loading: LoadProgress | null
   loadRuns: LoadRun[]
@@ -126,6 +137,18 @@ export const useDemo = () => {
   const d = useContext(Ctx)
   if (!d) throw new Error('useDemo outside <DemoProvider>')
   return d
+}
+
+/** True when `id` holds every event the other regions report (its heads cover theirs, origin by origin). A region that joined
+ *  late takes shoppers only once this is true: before that a write for an existing cart would find the cart "unknown" there. */
+export function regionCaughtUp(id: RegionId, joined: RegionId[], snaps: Partial<Record<RegionId, Snap>>): boolean {
+  const mine = snaps[id]
+  if (!mine?.ok || !mine.status) return false
+  const others = joined.filter((r) => r !== id).map((r) => snaps[r]).filter((s) => s?.ok && s.status)
+  if (!others.length) return false
+  const want: Record<string, number> = {}
+  for (const s of others) for (const [origin, head] of Object.entries(s!.status!.heads)) if (origin !== id) want[origin] = Math.max(want[origin] ?? 0, head)
+  return Object.entries(want).every(([origin, head]) => (mine.status!.heads[origin] ?? 0) >= head)
 }
 
 export function computeConvergence(snaps: Partial<Record<RegionId, Snap>>, joined: RegionId[]): Convergence {
@@ -369,7 +392,15 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
     return { reported: !!reported, on: burst > 0, burst, refillPerS: reported?.actor_refill_per_s ?? 1 }
   }, [snaps, joinedNow, allowance])
   const rateRef = useRef(rate); rateRef.current = rate
-  const route = sdk.routeFor(homeRegions ? HOME_REGION[shopper] : undefined)
+  // Bengaluru takes shoppers (their home region) once it has caught up, and keeps them until it stops answering
+  const [blrReady, setBlrReady] = useState(false)
+  useEffect(() => {
+    if (!joinedNow.includes('blr') || !snaps.blr?.ok) { if (blrReady) setBlrReady(false); return }
+    if (!blrReady && regionCaughtUp('blr', joinedNow, snaps)) setBlrReady(true)
+  }, [snaps, joinedNow, blrReady])
+  const homeSet = useMemo(() => joinedNow.filter((r) => r !== 'blr' || blrReady), [joinedNow, blrReady])
+  const homeSetRef = useRef(homeSet); homeSetRef.current = homeSet
+  const route = sdk.routeFor(homeRegions ? homeOf(shopper, homeSet) : undefined)
 
   const cartFor = useCallback((who: Shopper): ReportView | undefined => {
     const known = cartIds.current[who]
@@ -415,7 +446,7 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
 
   /** One request as a shopper: from their home region first, spending their own allowance. */
   const callAs = useCallback((who: Shopper, method: string, path: string, body: unknown, label: string) =>
-    sdk.call(method, path, body, { label, home: homeRef.current ? HOME_REGION[who] : undefined, actor: who }), [sdk])
+    sdk.call(method, path, body, { label, home: homeRef.current ? homeOf(who, homeSetRef.current) : undefined, actor: who }), [sdk])
 
   /** The shopper's open cart, creating one when they have none (an order that was placed or cancelled is finished: the next item starts a NEW cart). */
   const ensureCart = async (who: Shopper): Promise<string | null> => {
@@ -636,14 +667,20 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
   }, [api, toast])
 
   const crash = useCallback(async (r: RegionId) => { try { await api.chaos.crash(r); toast('warn', `${r.toUpperCase()} was killed (kill -9).`) } catch { toast('bad', 'The chaos agent did not answer (:9000).') } }, [api, toast])
+  const [startedAt, setStartedAt] = useState<Partial<Record<RegionId, number>>>({})
   const start = useCallback(async (r: RegionId) => {
+    setStartedAt((m) => ({ ...m, [r]: Date.now() }))
     try {
       await api.chaos.start(r)
       huntUntil.current = Date.now() + 30000 // live mode: look for it at every poll for a while, so it joins as soon as it answers
       toast('info', joinedRef.current.includes(r) ? `Starting ${NODE_NAME[r]}. It replays its log and pulls what it missed.` : `Adding ${NODE_NAME[r]}. It joins empty and copies everything from the other regions.`)
     } catch (e) {
-      const unknown = e instanceof Error && /\b404\b/.test(e.message)
-      toast('bad', unknown ? `The chaos agent does not know ${NODE_NAME[r]}. Start it with REGIONS=mum,pun,del,blr.` : 'The chaos agent did not answer (:9000).')
+      setStartedAt((m) => { const { [r]: _gone, ...rest } = m; return rest })
+      const msg = e instanceof Error ? e.message : ''
+      const unknown = /\b404\b/.test(msg)
+      const refused = /refused \(\d+\)\s*(.+)$/.exec(msg)   // the agent answered, with an error: say what it said
+      toast('bad', unknown ? `The chaos agent does not know ${NODE_NAME[r]}. Start it with REGIONS=mum,pun,del,blr.`
+        : refused ? `${NODE_NAME[r]} could not start: ${refused[1]}` : 'The chaos agent did not answer (:9000).')
     }
   }, [api, toast])
 
@@ -797,11 +834,45 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
     return () => clearInterval(t)
   }, [autoShoppers])
 
+  // ---- autoscale: when the regions are over their capacity, the next region joins by itself -----------------------------
+  const startRef = useRef(start); startRef.current = start
+  const [autoscale, setAutoscale] = useState(true)
+  const loadHist = useRef<number[]>([])
+  const scaleHoldUntil = useRef(0)
+  useEffect(() => {
+    loadHist.current = []
+    if (api.mode !== 'live' || !autoscale) return undefined
+    const t = setInterval(() => {
+      const next = OPTIONAL_REGIONS.find((r) => !joinedRef.current.includes(r))
+      if (!next || Date.now() < scaleHoldUntil.current) return
+      let load = 0
+      let capacity = 0
+      let seen = 0
+      for (const r of joinedRef.current) {
+        const s = snapsRef.current[r]
+        if (!s?.ok || !s.status) continue
+        seen += 1
+        load += s.status.load?.writes_per_s ?? 0
+        capacity += AUTOSCALE_CAPACITY[s.status.load?.power ?? 'medium'] ?? 1
+      }
+      if (!seen || capacity <= 0) return
+      const hist = loadHist.current
+      hist.push(load / capacity)
+      if (hist.length > AUTOSCALE_WINDOW) hist.shift()
+      if (hist.length < AUTOSCALE_WINDOW || hist.reduce((a, b) => a + b, 0) / hist.length <= 1) return
+      scaleHoldUntil.current = Date.now() + 60000 // one automatic start a minute at most
+      loadHist.current = []
+      toastRef.current('info', `The regions are over their capacity (${load.toFixed(1)} writes a second against ${capacity.toFixed(1)}). Starting ${NODE_NAME[next]} automatically.`)
+      void startRef.current(next)
+    }, 1000)
+    return () => clearInterval(t)
+  }, [api, autoscale])
+
   const value: Demo = {
     api, mode: api.mode, regions, members, optional, joined: joinedNow, sdk, sdkState, carryLog, snaps, review, last, presence, convergence, viewRegion, heals,
     chaosAvailable, chaosRunning, autoShoppers, setAutoShoppers, shopper, setShopper, cartFor, pending, saved, toasts, toast, dismissToast,
     tamperRows, proveSteps, proveResult, proving, addToCart, removeFromCart, writeField, resolve, setLink, crash, start, burst, tamper, proveIt, history, reset,
-    homeRegions, setHomeRegions, route, allowance, refusals, rate, rates, authMode, spamming, loading, loadRuns, spam, setShopperLimit, setRegionLimit, setPower,
+    homeRegions, setHomeRegions, route, allowance, refusals, rate, rates, authMode, autoscale, setAutoscale, startedAt, spamming, loading, loadRuns, spam, setShopperLimit, setRegionLimit, setPower,
   }
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

@@ -103,6 +103,16 @@ export async function revokeShopper(relayUrl: string, member: string, adminKey: 
   return json<{ revokedCredentials: number; statusVersion: number }>(res)
 }
 
+// Demo only: a fresh one-time claim code for one demo member, from the loopback relay (`python scripts/true_stack.py up` starts it).
+// The wallet then redeems it exactly as before (holder proof, then the issuer signs the credential), so nobody pastes codes.
+export async function requestClaimCode(relayUrl: string, member: string, adminKey: string, f: Fetch = fetch): Promise<string> {
+  const res = await f(`${relayUrl}/claim-code`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'X-Admin-Key': adminKey }, body: JSON.stringify({ member }),
+  })
+  const out = await json<{ code: string }>(res)
+  return out.code
+}
+
 export function secondsLeft(session: Pick<IdentitySession, 'expiresAt'> | null, nowMs: number): number {
   return session ? Math.max(0, Math.floor(session.expiresAt - nowMs / 1000)) : 0
 }

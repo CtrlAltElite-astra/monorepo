@@ -55,10 +55,8 @@ class RateLimited(Exception):
 
 
 def key(auth) -> str:
-    """Whose allowance a request uses: the verified person (credential id) in sign-in mode, the API-key actor otherwise
-    (contract 8.5: region.trust.claims.subject_key). In API-key mode this is exactly the old per-actor behaviour."""
-    from region.trust import claims
-    return claims.subject_key(auth)
+    """Whose allowance a request uses: the actor of the request (the API key's actor, or the signed-in member's actor id)."""
+    return auth.actor
 
 
 # ---- settings ---------------------------------------------------------------------------------------------

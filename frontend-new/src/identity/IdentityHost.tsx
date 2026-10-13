@@ -1,5 +1,5 @@
-// The identity section of the console (joining step J4): claim-code onboarding, sign-in with the wallet, the panel
-// of lane C, and a revoke button. It renders nothing unless the backend is in sign-in mode, so with sign-in off the
+// The identity section of the console (joining step J4): sign-in with the wallet (the credential is issued automatically
+// the first time), the panel of lane C, and a revoke button. It renders nothing unless the backend is in sign-in mode, so with sign-in off the
 // console is exactly what it was.
 //
 // Every value on screen comes from the regions (/v1/auth/me) or the wallet; nothing is invented here. Sessions are
@@ -8,10 +8,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useDemo } from '../state/demo'
 import { keys } from '../api/liveClient'
 import { IdentityPanel } from './IdentityPanel'
-import { revokeShopper, signIn, type Claim } from './client'
+import { requestClaimCode, revokeShopper, signIn, type Claim } from './client'
 import { browserWallet, type BrowserWallet } from './wallet'
 import {
-  PERSONAS, RELAY_URL, clearSession, parseClaimBlock, getVersion, isRevoked, markRevoked, sessionOf, setSession, subscribe,
+  PERSONAS, RELAY_URL, clearSession, getVersion, isRevoked, markRevoked, sessionOf, setSession, subscribe,
 } from './session'
 
 const env = import.meta.env as Record<string, string | undefined>
@@ -28,8 +28,6 @@ export function IdentityHost() {
   const [holds, setHolds] = useState<Record<string, Record<string, unknown> | null>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [codes, setCodes] = useState('')
-  const [claimMsg, setClaimMsg] = useState<string | null>(null)
 
   // follow the shopper chosen in the shop (staff personas stay selectable by hand)
   useEffect(() => { if (PERSONAS.some((p) => p.name === d.shopper)) setPersona(d.shopper) }, [d.shopper])
@@ -44,17 +42,40 @@ export function IdentityHost() {
   useEffect(() => () => { for (const t of timers.current.values()) clearTimeout(t) }, [])
 
   const login = useCallback(async (p: string, claim: Claim | null): Promise<boolean> => {
+    const info = PERSONAS.find((x) => x.name === p)
+    const wallet = walletOf(p)
+    // Onboarding: fetch a one-time code from the demo relay and redeem it (holder proof, then the issuer signs the credential).
+    // After that the wallet holds the credential and nobody has to paste anything.
+    const issue = async () => {
+      try {
+        await wallet.claim(await requestClaimCode(RELAY_URL, info!.member, keys().admin), ISSUER_URL)
+      } catch (e) {
+        throw new Error(`Could not issue ${p}'s credential (${e instanceof Error ? e.message : 'failed'}). Is \`python scripts/true_stack.py up\` running?`)
+      }
+      await refreshHolds()
+    }
+    if (info && !(await wallet.hasCredential())) await issue()
+
     // The region, not this page, picks nonce and audience; a region that is down just means "ask the next one".
     const ordered = [...regions].sort((a, b) => Number(Boolean(d.snaps[b.id]?.ok)) - Number(Boolean(d.snaps[a.id]?.ok)))
-    try {
-      // A credential claimed a moment ago is not in the regions' status list until their next refresh (about 5 seconds):
-      // "not active" right after onboarding is worth a few patient retries; any other refusal is final.
-      let s
-      for (let attempt = 0; ; attempt++) {
-        try { s = await signIn({ regions: ordered, wallet: walletOf(p), claim }); break } catch (e) {
-          if (attempt >= 4 || !(e instanceof Error) || !/not active/i.test(e.message)) throw e
+    // A credential claimed a moment ago is not in the regions' status list until their next refresh (about 5 seconds):
+    // "not active" right after onboarding is worth a few patient retries; any other refusal is final.
+    const attempt = async () => {
+      for (let n = 0; ; n++) {
+        try { return await signIn({ regions: ordered, wallet, claim }) } catch (e) {
+          if (n >= 4 || !(e instanceof Error) || !/not active/i.test(e.message)) throw e
           await new Promise((r) => setTimeout(r, 2500))
         }
+      }
+    }
+    try {
+      let s
+      try { s = await attempt() } catch (first) {
+        // A credential left in this browser by an earlier run of the demo (another issuer) can never verify again: issue a fresh
+        // one, once. A revoked member cannot get one, and then the original refusal is the honest answer.
+        if (!info || isRevoked(p) || /revoked/i.test(first instanceof Error ? first.message : '')) throw first
+        try { await issue() } catch { throw first }
+        s = await attempt()
       }
       setSession(p, s)
       clearTimeout(timers.current.get(p))
@@ -74,10 +95,12 @@ export function IdentityHost() {
   }
   const onSignInAll = async () => {
     setBusy(true); setError(null)
-    for (const p of PERSONAS) {
-      if (!holds[p.name] || isRevoked(p.name) || sessionOf(p.name)) continue
-      try { await login(p.name, null) } catch (e) { setError(`${p.name}: ${e instanceof Error ? e.message : 'sign-in failed'}`) }
-    }
+    // Everyone at once: each member's credential is issued and signed in together, so the wait for the regions' status
+    // refresh (about 5 seconds) is paid once, not once per member.
+    const todo = PERSONAS.filter((p) => !isRevoked(p.name) && !sessionOf(p.name))
+    const results = await Promise.allSettled(todo.map((p) => login(p.name, null)))
+    const failed = results.flatMap((r, i) => (r.status === 'rejected' ? [`${todo[i].name}: ${r.reason instanceof Error ? r.reason.message : 'sign-in failed'}`] : []))
+    if (failed.length) setError(failed.join(' | '))
     setBusy(false)
   }
   const onSignOut = () => { clearTimeout(timers.current.get(persona)); clearSession(persona) }
@@ -92,20 +115,6 @@ export function IdentityHost() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Revoke failed (is `python scripts/true_stack.py relay` running?)') }
     setBusy(false)
   }
-  const onClaim = async () => {
-    const entries = parseClaimBlock(codes)
-    if (!entries.length) { setClaimMsg('No "Name: CODE" lines found.'); return }
-    setBusy(true); setClaimMsg(null)
-    const done: string[] = []; const failed: string[] = []
-    for (const { persona: p, code } of entries) {
-      try { await walletOf(p).claim(code, ISSUER_URL); done.push(p) } catch (e) { failed.push(`${p}: ${e instanceof Error ? e.message : 'failed'}`) }
-    }
-    await refreshHolds()
-    setClaimMsg([done.length ? `Added ${done.join(', ')}.` : '', failed.length ? `Not added: ${failed.join('; ')}.` : ''].filter(Boolean).join(' '))
-    if (!failed.length) setCodes('')
-    setBusy(false)
-  }
-
   if (!d.authMode) return null
   const session = sessionOf(persona)
   const have = PERSONAS.filter((p) => holds[p.name])
@@ -117,24 +126,16 @@ export function IdentityHost() {
             {PERSONAS.map((p) => <option key={p.name} value={p.name}>{p.name}{p.role !== 'officer' ? ` (${p.role})` : ''}</option>)}
           </select>
         </label>
-        <button className="btn btn--sm" disabled={busy || !have.length} onClick={() => void onSignInAll()}>Sign in everyone</button>
-        <span className="muted small">{have.length ? `${have.length} of ${PERSONAS.length} credentials in this wallet` : 'No credentials in this wallet yet'}</span>
+        <button className="btn btn--sm" disabled={busy} onClick={() => void onSignInAll()}>Sign in everyone</button>
+        <span className="muted small">{have.length === PERSONAS.length ? 'All 7 members are ready' : 'Each member\'s credential is issued the first time they sign in'}</span>
       </div>
-      <details className="idp-host__claim card" open={!have.length}>
-        <summary className="small">Add claim codes to this wallet</summary>
-        <div>
-          <p className="small">Start the stack with <code>python scripts/true_stack.py up --provision</code> and paste the claim codes it prints (one <code>Name: CODE</code> per line). Each code works once.</p>
-          <textarea value={codes} onChange={(e) => setCodes(e.target.value)} rows={4} aria-label="Claim codes" placeholder={'Alice: ABCD-EFGH-…\nBob: …'} />
-          <div><button className="btn btn--sm btn--primary" disabled={busy || !codes.trim()} onClick={() => void onClaim()}>Add to wallet</button></div>
-          {claimMsg && <p className="small" role="status">{claimMsg}</p>}
-        </div>
-      </details>
       <IdentityPanel
         shopper={persona}
         holds={holds[persona] ?? null}
         session={session ? (({ token: _t, regionUrl: _u, ...rest }) => rest)(session) : null}
         revoked={isRevoked(persona)}
         busy={busy}
+        onboard
         error={error}
         onSignIn={(c) => void onSignIn(c)}
         onSignOut={onSignOut}

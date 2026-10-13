@@ -1,4 +1,6 @@
 """/internal/v1/sync/* (owner: Simrit). Peer-only; blocked when the link is down."""
+import re
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 
 from region import config, store
@@ -13,6 +15,26 @@ def peer_guard(x_region: str = Header(None), x_peer_token: str = Header(None)) -
     if links.is_down(x_region):  # inbound half of the partition switch
         raise HTTPException(503, "link_down")
     return x_region
+
+
+_REGION_ID = re.compile(r"^[a-z]{2,8}$")
+_LOOPBACK_URL = re.compile(r"^http://(127\.0\.0\.1|localhost):\d{2,5}$")
+
+
+@router.post("/join")
+def join(body: dict, x_peer_token: str = Header(None)):
+    """Scaling out: a new region (Bengaluru) announces itself to a running one, which then pulls from it and pushes to it.
+
+    Needs only the shared peer token, the same secret every peer already holds, so it works in sign-in mode too, where the
+    admin route needs an admin session. The address must be a loopback http address and the id a short region id, so a
+    holder of the token cannot point this region at an arbitrary host."""
+    if x_peer_token != config.settings.peer_token:
+        raise HTTPException(401, "unknown peer")
+    name, url = str(body.get("name", "")), str(body.get("url", "")).rstrip("/")
+    if not _REGION_ID.match(name) or name == config.settings.region or not _LOOPBACK_URL.match(url):
+        raise HTTPException(422, "name must be a short region id and url a loopback http address")
+    config.add_peer(name, url)
+    return {"region": config.settings.region, "peers": sorted(config.settings.peers)}
 
 
 @router.get("/summary")

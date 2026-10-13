@@ -162,3 +162,44 @@ def test_the_sidecar_http_client_is_built_once_per_event_loop_not_per_call(monke
     outs = asyncio.run(many())
     assert all(status == 503 for status, _ in outs)        # nothing listens there: an honest "unavailable", never a raise
     assert len(built) == 1
+
+
+# ---- onboarding without claim codes: the demo relay issues one when a member first signs in (real issuer) ----------------
+def test_the_demo_relay_hands_out_a_one_time_code_that_a_real_wallet_redeems(stack, tmp_path):
+    import socket
+    import threading
+
+    import httpx
+
+    from scripts.true_stack import serve_relay
+    from tests.convergence.conftest import Wallet
+
+    with socket.socket() as sk:
+        sk.bind(("127.0.0.1", 0))
+        port = sk.getsockname()[1]
+    threading.Thread(target=serve_relay, args=(stack, port), daemon=True).start()
+    url = f"http://127.0.0.1:{port}/claim-code"
+    for _ in range(50):
+        try:
+            httpx.post(url, timeout=0.3)
+            break
+        except httpx.HTTPError:
+            import time
+            time.sleep(0.1)
+    key = {"X-Admin-Key": "dev-admin"}
+
+    assert httpx.post(url, json={"member": "Alice"}).status_code == 401                 # the admin key is required
+    assert httpx.post(url, json={"member": "Nobody"}, headers=key).status_code == 404    # only a known demo member
+    got = httpx.post(url, json={"member": "Alice"}, headers=key)
+    assert got.status_code == 201 and got.json()["code"]
+    claimed = Wallet(tmp_path / "alice.json", stack.issuer_url).claim(got.json()["code"])   # holder proof + issuer signature
+    assert claimed.get("ok"), claimed
+    again = Wallet(tmp_path / "mallory.json", stack.issuer_url).claim(got.json()["code"])
+    assert not again.get("ok")                                                              # a code works once
+
+    # several members onboarding at the same moment (what "Sign in everyone" does) all get a code
+    import concurrent.futures
+    names = ["Bob", "Chitra", "Dev", "Esha", "Sunita"]
+    with concurrent.futures.ThreadPoolExecutor(len(names)) as pool:
+        codes = list(pool.map(lambda n: httpx.post(url, json={"member": n}, headers=key, timeout=10), names))
+    assert [r.status_code for r in codes] == [201] * len(names)

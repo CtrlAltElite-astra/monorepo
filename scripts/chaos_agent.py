@@ -21,6 +21,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -109,6 +110,16 @@ def mesh_for(region: str) -> list:
     return [r for r in REGIONS if r not in OPTIONAL_REGIONS or r == region or port_open(PORTS[r])]
 
 
+def _announce_when_up(region: str, mesh: list, proc, patience_s: float = 120.0) -> None:
+    """Tell the running regions about `region` as soon as it answers (same call as scripts/join_region.py)."""
+    end = time.time() + patience_s
+    while time.time() < end and proc.poll() is None:
+        if port_open(PORTS[region]):
+            join_region.notify_existing_nodes(region, PORTS[region], [r for r in mesh if r != region and port_open(PORTS[r])])
+            return
+        time.sleep(0.25)
+
+
 def check_region(region: str) -> None:
     if region not in PORTS or region not in REGIONS:
         raise HTTPException(404, f"unknown region '{region}' (known: {', '.join(REGIONS)})")
@@ -164,8 +175,14 @@ def start(region: str, x_admin_key: str = Header(None)):
     check_region(region)
     if port_open(PORTS[region]):
         return {"region": region, "already_running": True, "pid": region_pid(region)}
+    child = _children.get(region)
+    if child is not None and child.poll() is None:   # already being started (a second press, or an automatic start): do not spawn twice
+        return {"region": region, "already_running": False, "already_starting": True, "pid": child.pid, "up": False}
     mesh = mesh_for(region)
-    proc = spawn(region, mesh)
+    try:
+        proc = spawn(region, mesh)
+    except Exception as exc:  # noqa: BLE001 - say why (for example: no sign-in sidecar for this region), never a bare 500
+        raise HTTPException(500, f"could not start {region}: {type(exc).__name__}: {exc}")
     _children[region] = proc
     RUN_DIR.mkdir(exist_ok=True)
     (RUN_DIR / f"{region}.pid").write_text(str(proc.pid))
@@ -175,9 +192,10 @@ def start(region: str, x_admin_key: str = Header(None)):
             raise HTTPException(500, f"region process exited with code {proc.returncode}")
         time.sleep(0.1)
     up = port_open(PORTS[region])
-    if up and region in OPTIONAL_REGIONS:
-        # a region joining a running mesh: the others learn about it without a restart (same call as scripts/join_region.py)
-        join_region.notify_existing_nodes(region, PORTS[region], [r for r in mesh if r != region and port_open(PORTS[r])])
+    if region in OPTIONAL_REGIONS:
+        # A region joining a running mesh: the others learn about it without a restart. This waits for the region to answer in
+        # the background (in sign-in mode it can take longer than the 8 s above), so the request does not have to.
+        threading.Thread(target=_announce_when_up, args=(region, mesh, proc), daemon=True).start()
     return {"region": region, "already_running": False, "pid": proc.pid, "up": up}
 
 

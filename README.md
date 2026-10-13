@@ -121,8 +121,9 @@ The demo frontend is **`frontend-new/`**: a landing page and a live console. Eve
 
 **Sign-in mode (opt-in, the partner team's TRUE credential)**
 
-With the backend in sign-in mode the console shows an **identity section**: paste the claim codes, sign in with the wallet
-(a real SD-JWT presentation; the wallet's key never leaves the browser), and see *what the shopper holds* next to *what the
+With the backend in sign-in mode the console shows an **identity section**: press **Sign in everyone** (or sign in one member). The
+first time, each member's credential is issued for them (no codes to paste), then the wallet signs in with a real SD-JWT presentation
+(the wallet's key never leaves the browser), and you see *what the shopper holds* next to *what the
 shop received*. The **adults-only item** is refused with `403 claim_required` and nothing is stored until the shopper proves
 "over 18" (only that one attribute is disclosed). After a crash the next add succeeds on another region **with no new
 sign-in**. **Tamper** gains a fourth row: an event validly signed for a shopper whose credential is then revoked is refused by
@@ -179,11 +180,10 @@ guarded by an in-process lock. To reset the demo, stop the regions and delete `d
 ```bash
 cd collaboration/true && npm install                  # once, Node 24+
 pip install -r requirements-auth.txt                  # once (PyJWT)
-python scripts/true_stack.py up --provision           # issuer :4001, sidecars :4101-4103; prints one-time claim codes
-python scripts/true_stack.py relay                    # optional: lets the console's "Revoke this shopper" button work
+python scripts/true_stack.py up                       # issuer :4001, sidecars :4101-4103 and the demo relay :4090 (issues credentials, revokes)
 set AUTH_ENABLED=true                                 # then start the chaos agent / regions in that shell
 python scripts/chaos_agent.py                         # (regions it starts pick up their sidecar settings)
-cd frontend-new && set VITE_AUTH_ENABLED=1 && npm run dev   # paste the claim codes into the identity section
+cd frontend-new && set VITE_AUTH_ENABLED=1 && npm run dev   # open /demo and press "Sign in everyone"
 ```
 
 Start **all** the regions you want before using the console in this mode: adding a region at runtime needs an admin session.
@@ -193,8 +193,8 @@ Start **all** the regions you want before using the console in this mode: adding
 `frontend-new/tests/browser/integration.cjs` drives the real console in headless Chrome against real regions on a clean `data/`
 (one-off: `npm install --no-save puppeteer-core` in `frontend-new`). `node tests/browser/integration.cjs keys` checks spam as one
 shopper, limiting a region (the route moves, errors stay 0), the power dial, and Bengaluru joining. `... auth` (stack in sign-in
-mode, claim codes saved in `frontend-new/.local/codes.txt`) checks the restricted item, a denied write, the person-keyed
-limit, a crash without signing in again, and the four-row Tamper. Each `auth` run needs fresh claim codes (each works once).
+mode, started with `true_stack.py up`) checks automatic onboarding, the restricted item, a denied write, the person-keyed
+limit, a crash without signing in again, and the four-row Tamper.
 <!-- END:setup -->
 
 <!-- BEGIN:api owner=A -->

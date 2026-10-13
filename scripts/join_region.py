@@ -34,20 +34,26 @@ def running_regions(exclude: str) -> list:
 
 
 def notify_existing_nodes(region: str, port: int, peers: list) -> None:
-    """Tell the running nodes (via /admin/config) to add the joining region as a peer, without a restart."""
+    """Tell the running nodes to add the joining region as a peer, without a restart.
+
+    Uses the peer-token route (/internal/v1/sync/join), which also works in sign-in mode; falls back to /admin/config for a
+    region that does not have it yet."""
     node_url = f"http://127.0.0.1:{port}"
+    token = os.environ.get("PEER_TOKEN", "change-me")
     for peer in peers:
+        base = f"http://127.0.0.1:{PORTS[peer]}"
         try:
-            r = httpx.post(
-                f"http://127.0.0.1:{PORTS[peer]}/admin/config",
-                headers={"X-API-Key": "dev-officer"},
-                json={"add_peer": {"name": region, "url": node_url}},
-                timeout=1.0,
-            )
+            r = httpx.post(f"{base}/internal/v1/sync/join", headers={"X-Peer-Token": token},
+                           json={"name": region, "url": node_url}, timeout=2.0)
+            if r.status_code == 404:
+                r = httpx.post(f"{base}/admin/config", headers={"X-API-Key": "dev-officer"},
+                               json={"add_peer": {"name": region, "url": node_url}}, timeout=2.0)
             if r.status_code == 200:
                 print(f"Notified {peer} (:{PORTS[peer]}) to add peer {region} ({node_url})")
-        except Exception:
-            pass
+            else:
+                print(f"{peer} did not add {region}: HTTP {r.status_code}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"could not reach {peer}: {exc}")
 
 
 def join(region: str = "del") -> None:

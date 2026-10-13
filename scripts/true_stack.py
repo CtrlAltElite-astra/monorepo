@@ -22,6 +22,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -29,7 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TRUE_DIR = ROOT / "collaboration" / "true"
-DEFAULT_REGIONS = ["mum", "pun", "del"]
+DEFAULT_REGIONS = ["mum", "pun", "del", "blr"]   # blr has a sidecar from the start, so it can join later
 
 DEMO_MEMBERS = [   # synthetic; never real people. Attributes (contract v1.2): who can prove "over 18" / "member"
     ("Alice", "officer", {"age_over_18": True, "member": True}),
@@ -55,6 +56,7 @@ class Stack:
         self.session_keys = self.data / "pinned" / "session-keys"
         self.secrets_file = self.data / "secrets.json"
         self._procs = {}
+        self._members_lock = threading.Lock()   # the relay serves several browser requests at once
 
     # ---- derived values every region needs ------------------------------------------------
     def sidecar_port(self, region):
@@ -141,6 +143,32 @@ class Stack:
             self.start_sidecar(r)
         return self
 
+    def start_relay(self, port=RELAY_PORT):
+        """The demo relay as a background process (the console's onboarding and revoke button use it)."""
+        self.run.mkdir(parents=True, exist_ok=True)
+        log = open(self.run / "relay.log", "ab")
+        cmd = [sys.executable, str(Path(__file__).resolve()), "relay", "--port", str(port), "--data-dir", str(self.data),
+               "--regions", ",".join(self.regions), "--issuer-port", str(self.issuer_port),
+               "--sidecar-base-port", str(self.sidecar_base)]
+        kw = {"creationflags": 0x00000008} if os.name == "nt" else {"start_new_session": True}   # detached from this shell
+        p = subprocess.Popen(cmd, stdout=log, stderr=log, **kw)
+        (self.run / "relay.pid").write_text(str(p.pid))
+        self._procs["relay"] = p
+        self._wait_port(port)
+        return p
+
+    @staticmethod
+    def _wait_port(port, timeout=10.0):
+        import socket
+        end = time.time() + timeout
+        while time.time() < end:
+            with socket.socket() as sk:
+                sk.settimeout(0.3)
+                if sk.connect_ex(("127.0.0.1", port)) == 0:
+                    return True
+            time.sleep(0.2)
+        raise TimeoutError(f"port {port}")
+
     def stop(self, name):
         pidfile = self.run / f"{name}.pid"
         p = self._procs.get(name)
@@ -159,7 +187,7 @@ class Stack:
         pidfile.unlink(missing_ok=True)
 
     def down(self):
-        for name in ["issuer"] + [f"auth-{r}" for r in self.regions]:
+        for name in ["relay", "issuer"] + [f"auth-{r}" for r in self.regions]:
             self.stop(name)
 
     # ---- admin helpers (issuer admin API; the token never goes to a browser) -------------------
@@ -174,17 +202,37 @@ class Stack:
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read() or b"{}")
 
+    def ensure_members(self):
+        """Idempotent: the demo members are created once (data/true/members.json). No claim codes are made here."""
+        with self._members_lock:
+            mf = self.data / "members.json"
+            members = json.loads(mf.read_text()) if mf.exists() else {}
+            changed = False
+            for name, role, attributes in DEMO_MEMBERS:
+                if name not in members:
+                    status, body = self.admin("POST", "/v1/syncshield/members",
+                                              {"name": name, "role": role, **({"attributes": attributes} if attributes else {})})
+                    assert status == 201, body
+                    members[name] = body
+                    changed = True
+            if changed:   # written once, atomically: a concurrent reader never sees half a file
+                tmp = mf.with_suffix(".tmp")
+                tmp.write_text(json.dumps(members, indent=2))
+                os.replace(tmp, mf)
+            return members
+
+    def claim_code_for(self, who, ttl_minutes=60):
+        """A fresh one-time claim code for one demo member (name, first name or actor id), or (status, error body)."""
+        self.ensure_members()
+        actor = self.find_member(who)
+        if actor is None:
+            return 404, {"error": {"code": "unknown_member", "message": f"no single member matches {who!r}"}}
+        status, body = self.admin("POST", "/v1/syncshield/claim-codes", {"actorId": actor, "ttlMinutes": ttl_minutes})
+        return (201, {"code": body["code"]}) if status == 201 else (status, body)
+
     def provision_demo(self, ttl_minutes=720):
         """Idempotent: members are created once (data/true/members.json); fresh one-time codes every call."""
-        mf = self.data / "members.json"
-        members = json.loads(mf.read_text()) if mf.exists() else {}
-        for name, role, attributes in DEMO_MEMBERS:
-            if name not in members:
-                status, body = self.admin("POST", "/v1/syncshield/members",
-                                          {"name": name, "role": role, **({"attributes": attributes} if attributes else {})})
-                assert status == 201, body
-                members[name] = body
-        mf.write_text(json.dumps(members, indent=2))
+        members = self.ensure_members()
         codes = {}
         for name, _, _ in DEMO_MEMBERS:
             status, body = self.admin("POST", "/v1/syncshield/claim-codes",
@@ -195,8 +243,9 @@ class Stack:
 
 
     def members(self):
-        mf = self.data / "members.json"
-        return json.loads(mf.read_text()) if mf.exists() else {}
+        with self._members_lock:
+            mf = self.data / "members.json"
+            return json.loads(mf.read_text()) if mf.exists() else {}
 
     def find_member(self, who):
         """A demo member by name, first name or actor id; an unlisted `act_...` id is passed through as is."""
@@ -218,7 +267,10 @@ def serve_relay(stack, port=RELAY_PORT):
     admin token. Same guard as the chaos agent: header X-Admin-Key = ADMIN_KEY (default "dev-admin"), and CORS only
     for the console origins in CORS_ORIGINS (default the frontend-new dev server).
 
-        POST /revoke {"member": "<name | actor id>", "reason": "..."} -> the issuer's answer
+        POST /revoke      {"member": "<name | actor id>", "reason": "..."} -> the issuer's answer
+        POST /claim-code  {"member": "<name | actor id>"} -> {"code": "..."}: a fresh one-time claim code, so the console
+                          can onboard a demo member by itself (nobody pastes codes). The code still goes through the real
+                          flow: holder proof first, then the issuer signs the credential.
     """
     import hmac
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -246,8 +298,8 @@ def serve_relay(stack, port=RELAY_PORT):
             self._send(204)
 
         def do_POST(self):  # noqa: N802
-            if self.path != "/revoke":
-                return self._send(404, {"error": {"code": "not_found", "message": "POST /revoke only"}})
+            if self.path not in ("/revoke", "/claim-code"):
+                return self._send(404, {"error": {"code": "not_found", "message": "POST /revoke or /claim-code only"}})
             if not hmac.compare_digest(self.headers.get("X-Admin-Key", ""), admin_key):
                 return self._send(401, {"error": {"code": "unauthorized", "message": "missing or wrong X-Admin-Key"}})
             try:
@@ -255,14 +307,20 @@ def serve_relay(stack, port=RELAY_PORT):
                 member, reason = str(body["member"]), str(body.get("reason") or "revoked in the demo")[:200]
             except (ValueError, KeyError, TypeError):
                 return self._send(400, {"error": {"code": "bad_request", "message": "member is required"}})
-            status, out = stack.revoke(member, reason)
+            try:
+                if self.path == "/claim-code":
+                    status, out = stack.claim_code_for(member)
+                else:
+                    status, out = stack.revoke(member, reason)
+            except Exception as exc:  # noqa: BLE001 - say what failed instead of dropping the connection
+                status, out = 500, {"error": {"code": "relay_error", "message": f"{type(exc).__name__}: {exc}"[:200]}}
             self._send(status, out)
 
         def log_message(self, *_):
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", port), Relay)
-    print(f"revoke relay on http://127.0.0.1:{port}  (X-Admin-Key required; Ctrl+C to stop)")
+    print(f"demo relay (revoke, claim-code) on http://127.0.0.1:{port}  (X-Admin-Key required; Ctrl+C to stop)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -286,10 +344,14 @@ def main(argv=None):
     st = Stack(a.data_dir, a.regions.split(","), a.issuer_port, a.sidecar_base_port)
     if a.cmd == "up":
         st.up()
-        print(f"issuer {st.issuer_url}  sidecars " + ", ".join(f"{r}:{st.sidecar_port(r)}" for r in st.regions))
-        if a.provision:
+        st.ensure_members()
+        st.start_relay(a.port)
+        print(f"issuer {st.issuer_url}  sidecars " + ", ".join(f"{r}:{st.sidecar_port(r)}" for r in st.regions)
+              + f"  demo relay :{a.port}")
+        print("\nNothing to paste: open the console and press Sign in. Each member's credential is issued the first time.")
+        if a.provision:   # only for the command line (wallet-cli, scripts): the console does not need these
             _, codes = st.provision_demo()
-            print("\nClaim codes (paste this block into the wallet's onboarding box; each works once):")
+            print("\nClaim codes (one use each):")
             for n, c in codes.items():
                 print(f"{n.split(' ')[0]}: {c}")
         print("\nRunning in the background. Stop with: python scripts/true_stack.py down")
