@@ -7,7 +7,8 @@
     POST /reset/{region}   put ONE server back to a clean, healthy state: stop it if it is running, start it again and
                            heal every link it has. Its data is kept (it re-syncs from its peers): wiping one server
                            alone would reuse its sequence numbers, which the system refuses on purpose.
-    POST /reset-all        everything to zero: stop every region, delete their databases together, start them again
+    POST /reset-all        everything to zero: stop every region, delete their databases together, start the default
+                           regions again. An optional region (Bengaluru) stays dormant until it is added again.
     GET  /state            {regions: {mum: {up, pid, port, managed}, ...}}
     POST /tamper/{region}  {"mode": "edit" | "forge" | "reuse"}  inject a bad event through the peer path
                            and report whether it was quarantined and whether state changed
@@ -228,23 +229,25 @@ def _delete_db(region: str) -> bool:
 @app.post("/reset-all")
 def reset_all(x_admin_key: str = Header(None)):
     """Everything to zero. All the databases go together, so no region is left holding events that another has
-    forgotten (which is the only way sequence numbers could be reused)."""
+    forgotten (which is the only way sequence numbers could be reused).
+
+    Afterwards the DEFAULT regions are running again and an OPTIONAL region (Bengaluru) is dormant: it is stopped and
+    wiped with the rest but not started, so it only joins again when somebody adds it (POST /start/blr)."""
     require_admin(x_admin_key)
-    running = [r for r in REGIONS if port_open(PORTS[r])]
     for r in REGIONS:
         _stop(r)
     failed = [r for r in REGIONS if not _delete_db(r)]
     if failed:
         raise HTTPException(500, f"could not delete the database of {', '.join(failed)}: is something holding the file?")
-    # bring back what was running; if nothing was, the default regions (an optional one only when it was running)
-    want = [r for r in REGIONS if r in running] or [r for r in REGIONS if r not in OPTIONAL_REGIONS]
-    want.sort(key=lambda r: r in OPTIONAL_REGIONS)   # optional regions join a mesh that is already up
     started = []
-    for r in want:
+    for r in REGIONS:
+        if r in OPTIONAL_REGIONS:
+            continue                      # stays dormant: "Add Bengaluru" is the only thing that brings it back
         out = start(r, x_admin_key)
         if out.get("up"):
             started.append(r)
-    return {"reset": True, "wiped": list(REGIONS), "started": started}
+    return {"reset": True, "wiped": list(REGIONS), "started": started,
+            "dormant": [r for r in REGIONS if r in OPTIONAL_REGIONS]}
 
 
 @app.post("/start/{region}")

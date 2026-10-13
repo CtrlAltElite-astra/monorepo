@@ -264,7 +264,7 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
           for (const r of regions) {
             if (!OPTIONAL_REGIONS.includes(r.id) || members.includes(r.id)) continue
             void api.transport.request<{ ok?: boolean }>(r.id, 'GET', '/healthz', { timeoutMs: 800 })
-              .then((res) => { if (res.status === 200 && res.body?.ok && !seenOptional.current.includes(r.id)) seenOptional.current = [...seenOptional.current, r.id] })
+              .then((res) => { if (!stop && res.status === 200 && res.body?.ok && !seenOptional.current.includes(r.id)) seenOptional.current = [...seenOptional.current, r.id] }) // `stop`: an answer that arrives after a reset must not re-add it
               .catch(() => undefined)
           }
         }
@@ -664,12 +664,15 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
   const resetAll = useCallback(async () => {
     try {
       if (api.mode === 'live') {
-        toast('info', 'Resetting everything: every region is stopped, wiped together and started again. This takes a few seconds.')
+        toast('info', 'Resetting everything: every region is stopped and wiped together, and the default regions are started again. This takes a few seconds.')
         await api.chaos.resetAll()
-        huntUntil.current = Date.now() + 30000
       }
+      // Bengaluru goes back to "not joined": the agent does not start it again, and the console must not go looking for it,
+      // so it is part of the mesh again only when somebody presses Add.
+      seenOptional.current = []
+      huntUntil.current = 0
       setEpoch(e => e + 1) // a new world: counters, outbox, carts and the session start from zero
-      toast('ok', 'Everything is back to zero. Start from scratch.')
+      toast('ok', 'Everything is back to zero. Bengaluru is not joined: press Add Bengaluru to bring it back.')
     } catch {
       toast('bad', 'Reset did not complete. Is the chaos agent running on :9000?')
     }

@@ -68,8 +68,10 @@ export function RegionCards() {
   const prev = useRef<Record<string, Phase>>({})
   const timers = useRef<number[]>([])
   useEffect(() => () => timers.current.forEach(clearTimeout), [])
+  // a rebuilt world (Reset everything) starts clean: no remembered "starting" or "crashing" marks, no animation left running
+  useEffect(() => { setMarks({}); setArm({}); setFlash({}); prev.current = {} }, [d.api])
 
-  const phaseOf = (id: RegionId): Phase => {
+  const phaseOf =(id: RegionId): Phase => {
     const snap = d.snaps[id], up = !!(snap?.ok && snap.status)
     const m = marks[id] ?? {}
     if (!up) return m.startAt && now - m.startAt < 20000 ? 'starting' : snap ? 'down' : 'unknown'
