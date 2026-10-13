@@ -46,6 +46,14 @@ const PHASE_TEXT: Record<Phase, { label: string; sub: string }> = {
   unknown: { label: 'Unknown', sub: 'No answer yet' },
 }
 
+// What the region itself reports when it is neither healthy nor catching up: shown as it is, not folded into 'Degraded'.
+const LEVEL_TEXT: Record<string, { label: string; sub: string }> = {
+  ISOLATED: { label: 'Isolated', sub: 'Cannot reach one or more peers' },
+  CONSTRAINED: { label: 'Constrained', sub: 'A link to a peer is slow' },
+  OVERLOADED: { label: 'Overloaded', sub: 'Over its write limit: refusing writes' },
+  SYNCING: { label: 'Syncing', sub: 'Peers still hold different events' },
+}
+
 /** The three region cards: each shows its own life cycle, and carries its own crash / restart control. */
 export function RegionCards() {
   const d = useDemo()
@@ -100,7 +108,9 @@ export function RegionCards() {
           const cart = snap?.reports.find(c => c.report_id === selected?.report_id)
           const localItems = cart ? cartItems(cart) : []
           const up = !!status
-          const text = phase === 'down' && d.chaosRunning[r.id] === false ? { label: 'Offline', sub: 'The process was killed. Its data is unknown' } : PHASE_TEXT[phase]
+          const level = d.snaps[r.id]?.ok ? d.snaps[r.id]!.status?.level : undefined
+          const text = phase === 'down' && d.chaosRunning[r.id] === false ? { label: 'Offline', sub: 'The process was killed. Its data is unknown' }
+            : phase === 'degraded' && level && LEVEL_TEXT[level] ? LEVEL_TEXT[level] : PHASE_TEXT[phase]
           const isServing = serving === r.id && up
           return (
             <article key={r.id} className={`rc rc--${phase} ${isServing ? 'is-serving' : ''} ${flash[r.id] ? `flash-${flash[r.id]}` : ''} ${(arm[r.id] ?? 0) > 0 ? 'is-arming' : ''}`} style={{ ['--arm' as string]: arm[r.id] ?? 0 }}>
