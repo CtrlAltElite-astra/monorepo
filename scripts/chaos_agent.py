@@ -30,6 +30,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_one import PORTS, ROOT, spawn  # noqa: E402
+import join_region  # noqa: E402
+
+OPTIONAL_REGIONS = {"blr"}   # joins a running mesh when someone adds it; until then it is not anybody's peer
 
 RUN_DIR = ROOT / "run"
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "dev-admin")
@@ -100,6 +103,12 @@ def hard_kill(pid: int) -> None:
         os.kill(pid, signal.SIGKILL)
 
 
+def mesh_for(region: str) -> list:
+    """The regions that are part of the mesh when `region` starts: every configured one, except an optional region
+    (Bengaluru) that is not running. An optional region that has not joined must not show up as an unreachable peer."""
+    return [r for r in REGIONS if r not in OPTIONAL_REGIONS or r == region or port_open(PORTS[r])]
+
+
 def check_region(region: str) -> None:
     if region not in PORTS or region not in REGIONS:
         raise HTTPException(404, f"unknown region '{region}' (known: {', '.join(REGIONS)})")
@@ -155,7 +164,8 @@ def start(region: str, x_admin_key: str = Header(None)):
     check_region(region)
     if port_open(PORTS[region]):
         return {"region": region, "already_running": True, "pid": region_pid(region)}
-    proc = spawn(region, REGIONS)
+    mesh = mesh_for(region)
+    proc = spawn(region, mesh)
     _children[region] = proc
     RUN_DIR.mkdir(exist_ok=True)
     (RUN_DIR / f"{region}.pid").write_text(str(proc.pid))
@@ -164,7 +174,11 @@ def start(region: str, x_admin_key: str = Header(None)):
         if proc.poll() is not None:
             raise HTTPException(500, f"region process exited with code {proc.returncode}")
         time.sleep(0.1)
-    return {"region": region, "already_running": False, "pid": proc.pid, "up": port_open(PORTS[region])}
+    up = port_open(PORTS[region])
+    if up and region in OPTIONAL_REGIONS:
+        # a region joining a running mesh: the others learn about it without a restart (same call as scripts/join_region.py)
+        join_region.notify_existing_nodes(region, PORTS[region], [r for r in mesh if r != region and port_open(PORTS[r])])
+    return {"region": region, "already_running": False, "pid": proc.pid, "up": up}
 
 
 @app.post("/tamper/{region}")

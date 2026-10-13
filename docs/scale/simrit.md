@@ -13,7 +13,7 @@ Spam as one shopper: `python scripts/loadgen.py --actor Bob -n 40` (each shopper
 `scripts/run_one.py`). Split across regions: `python scripts/loadgen.py --spread mum,pun,del -n 300 -c 12`.
 Bengaluru: `python scripts/join_region.py blr` (needs the others running; the chaos agent needs `REGIONS=mum,pun,del,blr`).
 
-**Joining steps this lane needs from the others (not done here, they are other lanes' files).**
+**Joining steps (done in `scale-join`, see `docs/scale/join.md`; the list below is what this lane asked for).**
 1. `region/main.py` (A): add `from region.sync import scale` and, **before** the CORS middleware is added, `scale.install(app)`.
    Until that line exists the region limit and the power dial do nothing; the settings, the status blocks and
    `/admin/config` already work. The tests start regions through `tests/integration/scale_app.py`, which is exactly that line.

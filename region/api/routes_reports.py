@@ -8,6 +8,7 @@ Contract v1.2 (8.3): while a per-actor limit is set (region/api/ratelimit.py) ev
 the write path carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`; an actor with no tokens left gets 429
 `rate_limited` (built in region/main.py). Reads are never limited.
 """
+import json
 import re
 from typing import Any, Optional
 
@@ -20,7 +21,7 @@ from region import config, store
 from region.api import ratelimit, receipts, writes
 from region.auth import read_context, require
 from region.engine import canonical
-from region.trust import ownership
+from region.trust import claims, ownership
 from region.engine.derive import order
 from region.sync import state
 from region.trust import signing
@@ -191,10 +192,29 @@ def patch_report(report_id: str, body: PatchReport, auth=Depends(require("set"))
     return respond(result, 200)
 
 
+def _require_claim_for(text: str, auth) -> None:
+    """Sign-in mode: an item whose note says {"requires": "<claim>"} (an adults-only product) is stored only for a
+    session that PROVED that claim at sign-in; otherwise the contract's 403 claim_required and nothing is stored.
+    API-key mode has no claims, so the field is ignored there (the console does not offer restricted items then)."""
+    if not config.settings.auth_enabled:
+        return
+    try:
+        note = json.loads(text)
+    except ValueError:
+        return
+    required = note.get("requires") if isinstance(note, dict) else None
+    if required is None:
+        return
+    if required not in claims.CLAIMS:
+        raise HTTPException(422, f"unknown claim {required!r}")
+    claims.require_claim(auth, required)
+
+
 @router.post("/reports/{report_id}/notes", status_code=201)
 def add_note(report_id: str, body: NoteBody, auth=Depends(require("note")),
              idempotency_key: Optional[str] = Header(None)):
     _guard_write(report_id, auth)
+    _require_claim_for(body.text, auth)
     try:
         result = writes.local_write(report_id, "NOTE", None, {"text": body.text}, auth.actor,
                                     op_id=_op(body.op_id, idempotency_key), role=auth.role, auth_mode=auth.mode,

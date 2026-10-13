@@ -173,7 +173,7 @@ export interface ReviewItem {
 export interface CarryResult {
   event_id: string
   result: 'new' | 'dup' | 'rejected'
-  reason?: 'bad_hash' | 'bad_sig' | 'unknown_origin' | 'shape'
+  reason?: 'bad_hash' | 'bad_sig' | 'unknown_origin' | 'shape' | 'revoked_credential'
 }
 
 export interface HttpResult<T = any> {

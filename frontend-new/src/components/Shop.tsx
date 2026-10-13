@@ -1,7 +1,9 @@
 // The storefront: ONE column that scrolls as a whole (header, shoppers, products, cart). Products are compact rows with a
 // small thumbnail so the cart is never squeezed into a corner. Every action is a real write through the SDK.
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useDemo } from '../state/demo'
+import { IdentityHost } from '../identity/IdentityHost'
+import { getVersion, sessionOf, subscribe } from '../identity/session'
 import { CENTRES, PRODUCTS, RESTRICTED_PRODUCT, SHOPPERS, SPEEDS, STATUS_LABEL, cartCount, cartItems, cartTotal, isDone, restrictedProductEnabled, type Product } from '../domain/shop'
 import { rupees } from '../lib/util'
 import { AllowanceMeter, RateNote } from './Allowance'
@@ -13,7 +15,8 @@ const SKUS = ['FCOFF-500', 'BOTTLE-01', 'KURTA-01', 'EARBUD-01', 'LAMP-01', 'BAG
 const CATALOG = SKUS.map(sku => PRODUCTS.find(p => p.sku === sku)!)
 const CATEGORIES = ['All essentials', 'Home', 'Everyday']
 const HOME_SKUS = ['FCOFF-500', 'LAMP-01']
-// The adults-only item is hidden unless the flag is on (?restricted=1): the check that refuses it joins with the identity lane.
+// The adults-only item is shown when the backend is in sign-in mode (or with ?restricted=1): the region refuses it with
+// 403 claim_required until the shopper has proven they are over 18.
 const CATALOG_WITH_RESTRICTED = [...CATALOG, RESTRICTED_PRODUCT]
 
 export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void; onReview: () => void }) {
@@ -35,7 +38,9 @@ export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void;
   const status = cart?.state.status || 'open'
   const locked = isDone(status)
   const busy = Object.entries(d.pending).some(([key, val]) => val && key.includes(`:${d.shopper}:`))
-  const catalog = useMemo(() => (restrictedProductEnabled() ? CATALOG_WITH_RESTRICTED : CATALOG), [])
+  const catalog = useMemo(() => (restrictedProductEnabled() || d.authMode ? CATALOG_WITH_RESTRICTED : CATALOG), [d.authMode])
+  useSyncExternalStore(subscribe, getVersion)
+  const signedIn = d.authMode ? sessionOf(d.shopper) : null
   const products = catalog.filter(p => category === CATEGORIES[0] || (category === 'Home' ? HOME_SKUS.includes(p.sku) : !HOME_SKUS.includes(p.sku)))
 
   useScrollReveal(scroller, [category, d.shopper])
@@ -79,7 +84,11 @@ export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void;
       <header className="sp-head" data-reveal>
         <div className="sp-eyebrow">The storefront</div>
         <h1>Everyday essentials<span>.</span></h1>
-        <p>Shopping as <b>{d.shopper}</b>. Every tap is a real write to the live backend on the right.</p>
+        <p>Shopping as <b>{d.shopper}</b>. Every tap is a real write to the live backend on the right.
+          {d.authMode && (signedIn
+            ? <> <Chip tone="ok" icon="check">signed in as {d.shopper} ({signedIn.role}) · {signedIn.authMode}</Chip></>
+            : <> <Chip tone="warn" icon="lock">not signed in: use the identity section below</Chip></>)}
+        </p>
       </header>
 
       <div className="sp-shoppers" role="tablist" aria-label="Choose shopper" data-reveal>
@@ -96,7 +105,7 @@ export function Shop({ onHistory, onReview }: { onHistory: (id: string) => void;
         })}
       </div>
       <RateNote />
-      <div id="identity-slot" /> {/* empty on purpose: the identity panel mounts here when the identity lane is joined */}
+      <div id="identity-slot"><IdentityHost /></div> {/* renders nothing unless the backend is in sign-in mode */}
 
       <div className="sp-filter" role="group" aria-label="Product category" data-reveal>
         {CATEGORIES.map(c => <button key={c} className={category === c ? 'selected' : ''} onClick={() => setCategory(c)}>{c}</button>)}

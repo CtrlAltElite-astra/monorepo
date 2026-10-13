@@ -10,6 +10,7 @@ const REASON: Record<string, string> = {
   bad_sig: 'the signature did not match: only the origin holds its key',
   unknown_origin: 'no key is registered for that origin',
   shape: 'not a well-formed event',
+  revoked_credential: 'the credential that wrote this was revoked',
 }
 
 export function SecurityPanel() {
@@ -57,10 +58,10 @@ export function SecurityPanel() {
                 <span><b>{r.label}</b>{r.reason && <em> · {r.reason}: {REASON[r.reason] ?? ''}</em>}</span>
               </li>
             ))}
-            {d.authMode && (
+            {d.authMode && !d.tamperRows.some((r) => r.reason === 'revoked_credential') && (
               <li className="is-pending" data-slot="revoked-credential">
                 <Chip tone="muted" icon="clock">not sent</Chip>
-                <span><b>An event signed by a revoked credential</b><em> · this row is filled in when the identity lane is joined</em></span>
+                <span><b>An event signed by a revoked credential</b><em> · sent as a fourth row by Tamper when two people are signed in</em></span>
               </li>
             )}
           </ul>
