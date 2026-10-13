@@ -21,7 +21,7 @@ export function allowanceFrom(headers: Record<string, string>, body: unknown, re
   if (headers['x-ratelimit-limit'] === undefined || headers['x-ratelimit-remaining'] === undefined) return null
   if (!Number.isFinite(limit) || !Number.isFinite(remaining) || limit <= 0) return null
   const wait = Number((body as { retry_after_ms?: unknown } | null)?.retry_after_ms)
-  return { limit, remaining, at: now, refillPerS: refillPerS > 0 ? refillPerS : 1, ...(Number.isFinite(wait) && wait > 0 ? { retryAfterMs: wait } : {}) }
+  return { limit, remaining, at: now, refillPerS: refillPerS >= 0 ? refillPerS : 1, ...(Number.isFinite(wait) && wait > 0 ? { retryAfterMs: wait } : {}) }
 }
 
 /** Whole requests a shopper can make at `now`. */
@@ -31,12 +31,13 @@ export function remainingNow(a: Allowance, now: number): number {
   return Math.max(0, Math.min(a.limit, Math.floor(a.remaining + refilled + 1e-9)))
 }
 
-/** Whole seconds until the next request is allowed (0 when one is allowed now). */
+/** Whole seconds until the next request is allowed (0 when one is allowed now; Infinity when the allowance never refills). */
 export function secondsUntilNext(a: Allowance, now: number): number {
   if (remainingNow(a, now) >= 1) return 0
+  if (a.refillPerS <= 0) return Infinity
   const have = Math.min(a.limit, a.remaining + Math.max(0, now - a.at) / 1000 * a.refillPerS)
   return Math.max(1, Math.ceil((1 - have) / a.refillPerS))
 }
 
 /** A full bucket, for a shopper who has not made a request since the limit was switched on. */
-export const fullAllowance = (limit: number, refillPerS: number, now: number): Allowance => ({ limit, remaining: limit, at: now, refillPerS: refillPerS > 0 ? refillPerS : 1 })
+export const fullAllowance = (limit: number, refillPerS: number, now: number): Allowance => ({ limit, remaining: limit, at: now, refillPerS: refillPerS >= 0 ? refillPerS : 1 })

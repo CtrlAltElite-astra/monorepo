@@ -5,7 +5,7 @@ that reaches the write path costs one token; with an empty bucket the write is r
 Off while burst is 0 (the default), so a region that sets nothing behaves exactly as before.
 
     RATE_ACTOR_BURST          tokens in a full bucket (0 = off)
-    RATE_ACTOR_REFILL_PER_S   tokens added per second (default 1)
+    RATE_ACTOR_REFILL_PER_S   tokens added per second (default 1; 0 = no refill: one burst and then nothing)
 
 Where the limit comes from, first match wins: configure() (tests and in-process callers), then
 `config.settings.rate_actor_burst` / `.rate_actor_refill_per_s` when the settings object has them (so the runtime
@@ -27,6 +27,7 @@ from typing import Optional
 from region import config
 
 DEFAULT_REFILL_PER_S = 1.0
+NEVER_MS = 3_600_000        # retry_after_ms when the bucket does not refill: effectively never, one hour
 MAX_BUCKETS = 5000          # above this, buckets that have refilled completely are forgotten (they equal "no bucket")
 _EPS = 1e-9                 # float slack: a client that waits exactly retry_after_ms must find its token there
 
@@ -81,7 +82,7 @@ def limits() -> tuple:
         refill = os.environ.get("RATE_ACTOR_REFILL_PER_S", DEFAULT_REFILL_PER_S)
     burst = max(0, _number(burst, int, 0))
     refill = _number(refill, float, DEFAULT_REFILL_PER_S)
-    if not (refill > 0) or math.isinf(refill):   # also catches NaN
+    if not (refill >= 0) or math.isinf(refill):   # negative, NaN or infinite: unusable, fall back; 0 is a real setting
         refill = DEFAULT_REFILL_PER_S
     return burst, refill
 
@@ -139,7 +140,7 @@ def take(subject: str) -> Optional[Decision]:
             return Decision(True, burst, int(tokens + _EPS), 0)
         _buckets[subject] = [tokens, now]
         _refused += 1
-        wait_ms = max(1, math.ceil((1.0 - tokens) / refill * 1000))
+        wait_ms = max(1, math.ceil((1.0 - tokens) / refill * 1000)) if refill > 0 else NEVER_MS
         return Decision(False, burst, 0, wait_ms)
 
 

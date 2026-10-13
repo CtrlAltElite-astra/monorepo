@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { allowanceFrom, fullAllowance, remainingNow, secondsUntilNext } from '../src/lib/allowance'
 import { compareSentence, cellOf, parseScaleResult } from '../src/lib/scale'
@@ -35,6 +36,15 @@ describe('a shopper\'s requests left', () => {
     expect(secondsUntilNext(empty, at + 1000)).toBe(0)
     expect(secondsUntilNext({ ...empty, refillPerS: 0.25 }, at)).toBe(4)
     expect(secondsUntilNext({ limit: 10, remaining: 3, at, refillPerS: 1 }, at)).toBe(0)
+  })
+
+  it('an allowance that never refills says so: nothing comes back and the wait is endless', () => {
+    const a = allowanceFrom({ 'x-ratelimit-limit': '3', 'x-ratelimit-remaining': '0' }, { retry_after_ms: 3_600_000 }, 0, at)!
+    expect(a.refillPerS).toBe(0)
+    expect(remainingNow(a, at + 86_400_000)).toBe(0)
+    expect(secondsUntilNext(a, at + 86_400_000)).toBe(Infinity)
+    expect(secondsUntilNext({ ...a, remaining: 2 }, at)).toBe(0)
+    expect(remainingNow(fullAllowance(3, 0, at), at + 60_000)).toBe(3)
   })
 
   it('a shopper who has not written since the limit went on has a full bucket', () => {
@@ -82,6 +92,29 @@ describe('the measured scaling result', () => {
     expect(compareSentence(flipped)).toBe('Three regions at low power were 2.0 times faster than one region at high power.')
     const tie = parseScaleResult({ ...good, compare: { one_high: { writes_per_s: 500 }, three_low: { writes_per_s: 510 } } })!
     expect(compareSentence(tie)).toBe('One strong region and three ordinary ones came out about the same.')
+  })
+})
+
+describe('the result file that is in the repository', () => {
+  // whatever the benchmark last wrote: today's file says power was unsupported, a later run fills it in. The console must show exactly that.
+  const raw = JSON.parse(readFileSync(new URL('../public/scale-result.json', import.meta.url), 'utf-8'))
+  const r = parseScaleResult(raw)!
+  const says = (row: { status?: string; writes_per_s?: number | null }) => (row.status === 'unsupported' || !(typeof row.writes_per_s === 'number' && row.writes_per_s > 0) ? 'unsupported' : row.writes_per_s)
+
+  it('is read as a result file', () => {
+    expect(r).not.toBeNull()
+    expect(r.writes).toBe(raw.writes)
+    expect(r.machine).toBe(raw.machine)
+  })
+
+  it('every cell is the number in the file, or "unsupported" where the file says it could not be measured', () => {
+    expect(r.vertical.map((v) => v.power)).toEqual(raw.vertical.map((v: { power: string }) => v.power))
+    raw.vertical.forEach((row: any, i: number) => expect(r.vertical[i].cell === 'unsupported' ? 'unsupported' : (r.vertical[i].cell as { writes_per_s: number }).writes_per_s).toBe(says(row)))
+    expect(r.horizontal.map((h) => h.regions)).toEqual(raw.horizontal.map((h: { regions: number }) => h.regions))
+    raw.horizontal.forEach((row: any, i: number) => expect(r.horizontal[i].cell === 'unsupported' ? 'unsupported' : (r.horizontal[i].cell as { writes_per_s: number }).writes_per_s).toBe(says(row)))
+    for (const [key, cell] of [['one_high', r.oneHigh], ['three_low', r.threeLow]] as const) {
+      expect(cell === 'unsupported' ? 'unsupported' : (cell as { writes_per_s: number }).writes_per_s).toBe(says(raw.compare[key]))
+    }
   })
 })
 

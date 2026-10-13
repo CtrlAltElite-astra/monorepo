@@ -17,7 +17,7 @@ export function AllowanceMeter({ who }: { who: Shopper }) {
   const tone = left === 0 ? 'empty' : pct <= 30 ? 'low' : 'ok'
   return (
     <span className={`sp-meter sp-meter--${tone}`} role="meter" aria-label={`${who}: requests left`} aria-valuemin={0} aria-valuemax={a.limit} aria-valuenow={left}
-      title={`${who} can make ${left} more request${left === 1 ? '' : 's'} right now. Out of ${a.limit}, refilling ${a.refillPerS} a second.`}>
+      title={`${who} can make ${left} more request${left === 1 ? '' : 's'} right now. Out of ${a.limit}${a.refillPerS > 0 ? `, refilling ${a.refillPerS} a second.` : '; this allowance does not refill.'}`}>
       <span className="sp-meter-bar"><i style={{ width: `${pct}%` }} /></span>
       <small>{left} left</small>
     </span>
@@ -35,7 +35,7 @@ export function RateNote() {
   return (
     <p className="sp-rate-note" role="status">
       <Icon name={wait > 0 ? 'clock' : 'check'} size={18} />
-      <span>{wait > 0 ? <>{d.shopper} is going too fast. The next request is allowed in <b>{wait} s</b>.</> : <>{d.shopper} can go on now.</>} Nothing was lost.</span>
+      <span>{!Number.isFinite(wait) ? <>{d.shopper} has used every request this limit allows, and it does not refill.</> : wait > 0 ? <>{d.shopper} is going too fast. The next request is allowed in <b>{wait} s</b>.</> : <>{d.shopper} can go on now.</>} Nothing was lost.</span>
     </p>
   )
 }

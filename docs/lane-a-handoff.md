@@ -187,4 +187,14 @@ Dev keys: `run_one.py` now provisions `dev-officer`, `dev-supervisor` and `dev-a
   74 / 328 / 494 writes a second and the same 1000 writes over 3 and 4 regions gives 961 and 1269. Also fixed: `LiveSystem.tsx` is CRLF in the repository, so
   its line endings were kept to leave a readable diff. Checks: `pytest tests` passed (18 skips, the Node-only convergence tests); `npm test` 105 tests;
   `npm run build` OK; browser: the simulator acceptance walk, live mode against the running v1.1 regions (degrades honestly), a 390 px phone width, and the
-  isolated real-backend test `.local/integration.cjs` (9 stages). Left for the joining steps and lane D: `docs/scale/a.md`.
+  isolated real-backend test `.local/integration.cjs` (9 stages).
+  Then `origin/main` (lanes B, C and D, merged there while this lane was being built) was merged into `a/akshit-scale`: no conflicts. On the merged tree
+  `pytest tests` = 527 passed, 24 skipped; lane D's settings, `/admin/config`, status blocks (`rate.refused_actor` from `ratelimit.snapshot()`) and
+  per-shopper dev keys work with this lane's limiter as designed; lane B's `scale-result.json` is read by the Scaling tab exactly as it says (a test reads
+  the real file). Checked against three real region processes with lane D's gate installed before CORS: the real limiter refused Bob while Alice's meter
+  stayed full, the `X-RateLimit-*` headers are readable across CORS, the dial set and read the real batch, and a region limit moved the browser to Pune with
+  zero errors shown to shoppers; a 300-write burst took the same time at low and at high power on this laptop, as lane D found, and the console says so.
+  Found: lane D's `scale.install(app)` has to be called from `region/main.py` (this lane's file) before the CORS middleware, or the region limit and the power
+  dial do nothing; it is not in the dependent plan and not done here because `install` is not idempotent and lane D's test app calls it too (two calls halve the
+  region limit). Fixed: a refill of 0, which lane D's `/admin/config` accepts, was silently turned into 1 a second; it now means one burst and then nothing.
+  Left for the joining steps and lane D: `docs/scale/a.md`.

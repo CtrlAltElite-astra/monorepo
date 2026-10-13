@@ -233,7 +233,7 @@ function config(node: SimNode, body: any): Res {
   if (unknown.length) return fail(422, { detail: `unknown setting: ${unknown.join(', ')}` })
   const whole = (v: any) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 100000
   if ('rate_actor_burst' in b && !whole(b.rate_actor_burst)) return fail(422, { detail: 'rate_actor_burst must be a whole number, 0 or more' })
-  if ('rate_actor_refill_per_s' in b && !(typeof b.rate_actor_refill_per_s === 'number' && b.rate_actor_refill_per_s > 0 && b.rate_actor_refill_per_s <= 100000)) return fail(422, { detail: 'rate_actor_refill_per_s must be above 0' })
+  if ('rate_actor_refill_per_s' in b && !(typeof b.rate_actor_refill_per_s === 'number' && b.rate_actor_refill_per_s >= 0 && b.rate_actor_refill_per_s <= 100000)) return fail(422, { detail: 'rate_actor_refill_per_s must be a number, 0 or more' })
   if ('region_write_limit_per_s' in b && !whole(b.region_write_limit_per_s)) return fail(422, { detail: 'region_write_limit_per_s must be a whole number, 0 or more' })
   if ('power' in b && !POWERS.includes(b.power)) return fail(422, { detail: 'power must be low, medium or high' })
   if ('rate_actor_burst' in b) node.actorBurst = b.rate_actor_burst

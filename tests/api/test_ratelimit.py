@@ -140,6 +140,19 @@ def test_the_bucket_refills_over_time_and_never_beyond_the_burst(shop, clock):
     assert add(shop, BOB).status_code == 429
 
 
+def test_a_refill_of_zero_is_one_burst_and_never_again(shop, clock):
+    ratelimit.configure(burst=2, refill_per_s=0)                # a legal setting: lane D's /admin/config accepts 0
+    assert [add(shop, BOB).status_code for _ in range(2)] == [201, 201]
+    refused = add(shop, BOB)
+    assert refused.status_code == 429
+    assert refused.json() == {"error": "rate_limited", "scope": "actor", "retry_after_ms": ratelimit.NEVER_MS}
+    assert refused.headers["retry-after"] == "3600"
+    clock.advance(86_400)                                        # a day later nothing has come back
+    assert add(shop, BOB).status_code == 429
+    assert add(shop, ALICE).status_code == 201                  # and Alice still has her own burst
+    assert ratelimit.snapshot()["actor_refill_per_s"] == 0.0
+
+
 def test_retry_after_is_whole_seconds_and_at_least_one(shop, clock):
     ratelimit.configure(burst=1, refill_per_s=0.4)
     add(shop, BOB)
@@ -294,7 +307,7 @@ def test_raising_and_lowering_the_burst_at_runtime(shop, clock):
 
 
 @pytest.mark.parametrize("burst,refill,expected", [
-    ("abc", "1", (0, 1.0)), ("-4", "1", (0, 1.0)), ("3", "0", (3, 1.0)), ("3", "-2", (3, 1.0)), ("3", "nan", (3, 1.0)),
+    ("abc", "1", (0, 1.0)), ("-4", "1", (0, 1.0)), ("3", "0", (3, 0.0)), ("3", "-2", (3, 1.0)), ("3", "nan", (3, 1.0)),
     ("3", "inf", (3, 1.0)), ("3", "x", (3, 1.0)), ("", "", (0, 1.0)), ("7", "2.5", (7, 2.5)),
 ])
 def test_unusable_settings_fall_back_to_safe_values(monkeypatch, burst, refill, expected):

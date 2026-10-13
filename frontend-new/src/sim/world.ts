@@ -27,6 +27,8 @@ export const COMMIT_PER_WRITE_MS = 1.5
 export const serviceMs = (batch: number) => (COMMIT_FIXED_MS + COMMIT_PER_WRITE_MS * batch) / batch
 /** A region that turns a write away asks the caller to leave it alone for this long (the Retry-After of a 503). */
 export const REGION_RETRY_AFTER_S = 2
+/** retry_after_ms of a bucket that never refills: effectively never, one hour */
+export const NEVER_MS = 3_600_000
 
 export interface TokenDecision { allowed: boolean; limit: number; remaining: number; retryAfterMs: number }
 
@@ -131,7 +133,7 @@ export class SimNode {
     }
     this.buckets.set(actor, { tokens, at: now })
     this.refusedActor++
-    return { allowed: false, limit: this.actorBurst, remaining: 0, retryAfterMs: Math.max(1, Math.ceil((1 - tokens) / this.actorRefill * 1000)) }
+    return { allowed: false, limit: this.actorBurst, remaining: 0, retryAfterMs: this.actorRefill > 0 ? Math.max(1, Math.ceil((1 - tokens) / this.actorRefill * 1000)) : NEVER_MS }
   }
 
   /** The actor's allowance without spending anything (a replayed write carries it). */

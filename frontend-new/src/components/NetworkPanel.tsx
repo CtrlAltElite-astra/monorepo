@@ -89,8 +89,8 @@ export function NetworkPanel() {
           <button className="btn btn--sm" disabled={busy} onClick={() => void d.burst(aim, 300)}><Icon name="activity" size={14} />Burst 300</button>
           <button className="btn btn--sm" disabled={busy} onClick={() => void d.burst(aim, 1000)}><Icon name="activity" size={14} />Burst 1000</button>
           <button className="btn btn--sm" disabled={busy || ids.length < 2} onClick={() => void d.burst('spread', 1000)} title={`The same 1000 writes, divided over all ${ids.length} regions`}><Icon name="layers" size={14} />Spread 1000</button>
-          <button className="btn btn--sm btn--spam" disabled={busy || (d.mode === 'live' && !d.rate.on)} onClick={() => void d.spam(d.shopper)}
-            title={d.mode === 'live' && !d.rate.on ? 'Switch the per-shopper limit on first' : `25 quick adds as ${d.shopper}`}>
+          <button className="btn btn--sm btn--spam" disabled={busy} onClick={() => void d.spam(d.shopper)}
+            title={d.rate.on ? `25 quick adds as ${d.shopper}` : 'The per-shopper limit is off, so all 25 adds go through. A quick way to put load on a limited region.'}>
             <Icon name="bolt" size={14} />{d.spamming ? `${d.spamming} is spamming…` : `Spam as ${d.shopper}`}</button>
           <button className="btn btn--sm btn--warn" onClick={() => void d.tamper(aim)}><Icon name="skull" size={14} />Tamper</button>
         </div>

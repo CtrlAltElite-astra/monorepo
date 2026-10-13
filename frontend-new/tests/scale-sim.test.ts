@@ -58,6 +58,19 @@ describe('the per-shopper limit (contract 8.3)', () => {
     expect([note(world, 'bob', 'b5'), note(world, 'bob', 'b6')].map(left)).toEqual([1, 0]) // a long break fills the bucket, not more
   })
 
+  it('a refill of zero is one burst and never again (the retry_after_ms says so)', async () => {
+    const { world, advance } = setup()
+    newCart(world, 'mum')
+    expect(config(world, { rate_actor_burst: 2, rate_actor_refill_per_s: 0 }).body).toMatchObject({ rate_actor_refill_per_s: 0 })
+    note(world, 'bob', 'b1'); note(world, 'bob', 'b2')
+    const refused = note(world, 'bob', 'b3')
+    expect(refused.status).toBe(429)
+    expect(refused.body).toEqual({ error: 'rate_limited', scope: 'actor', retry_after_ms: 3_600_000 })
+    await advance(600_000) // ten minutes later nothing has come back
+    expect(note(world, 'bob', 'b4').status).toBe(429)
+    expect(note(world, 'alice', 'a1').status).toBe(201)
+  })
+
   it('a replay is answered before the limiter: never refused, never counted', () => {
     const { world } = setup()
     newCart(world, 'mum')
@@ -224,7 +237,7 @@ describe('POST /admin/config (contract 8.1)', () => {
 
   it('an unknown key is 422, so is a bad value, and nothing changes', () => {
     const { world } = setup()
-    for (const bad of [{ colour: 'red' }, { rate_actor_burst: -1 }, { rate_actor_burst: 1.5 }, { rate_actor_burst: '3' }, { rate_actor_refill_per_s: 0 }, { region_write_limit_per_s: -2 }, { power: 'turbo' }]) {
+    for (const bad of [{ colour: 'red' }, { rate_actor_burst: -1 }, { rate_actor_burst: 1.5 }, { rate_actor_burst: '3' }, { rate_actor_refill_per_s: -0.5 }, { region_write_limit_per_s: -2 }, { power: 'turbo' }]) {
       expect(config(world, bad).status).toBe(422)
     }
     expect(config(world, { rate_actor_burst: 4, colour: 'red' }).status).toBe(422)

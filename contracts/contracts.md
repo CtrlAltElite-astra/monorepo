@@ -271,7 +271,7 @@ Frozen on 2026-10-13 so four lanes can build against it at the same time. Everyt
 | name | default | meaning | built by |
 |---|---|---|---|
 | `RATE_ACTOR_BURST` | 0 (off) | writes one actor may make at once: the size of its token bucket | Lane A |
-| `RATE_ACTOR_REFILL_PER_S` | 1 | tokens added to each actor's bucket per second | Lane A |
+| `RATE_ACTOR_REFILL_PER_S` | 1 | tokens added to each actor's bucket per second (0: no refill, one burst and then nothing; `retry_after_ms` is then 3600000) | Lane A |
 | `REGION_WRITE_LIMIT_PER_S` | 0 (off) | writes this region accepts per second from clients | Lane D |
 | `POWER` | `medium` | writes saved per batch: `low` 1, `medium` 8, `high` 32 | Lane D |
 

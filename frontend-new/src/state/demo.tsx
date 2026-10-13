@@ -315,7 +315,7 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
       } catch { /* no answer is not "auth mode" */ }
     }
     const first = setTimeout(check, 1500)
-    const t = setInterval(check, 15000)
+    const t = setInterval(check, 120000) // sign-in cannot change while the page is open; a rare re-check covers a region restarted in the other mode
     return () => { stop = true; clearTimeout(first); clearInterval(t) }
   }, [api])
 
