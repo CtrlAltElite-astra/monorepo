@@ -2,6 +2,7 @@
 // VITE_CHAOS_URL and the dev keys (see web/.env.example). The browser-visible keys are development credentials.
 import type { Chaos, ChaosState, HttpResult, RegionId, RegionInfo, RequestOptions, Role, Transport } from './types'
 import { NetworkError } from './types'
+import { bearerModeOn, tokenFor } from '../identity/session'
 
 const env = import.meta.env as Record<string, string | undefined>
 const NAMES: Record<string, string> = { mum: 'Mumbai', pun: 'Pune', del: 'Delhi', blr: 'Bengaluru' }
@@ -56,7 +57,11 @@ export function createLiveTransport(raw = env.VITE_REGION_URLS || DEFAULT_REGION
       if (!info) throw new NetworkError(`no such region: ${region}`, 'refused')
       const headers: Record<string, string> = { ...opts.headers }
       if (opts.body !== undefined) headers['Content-Type'] = 'application/json'
-      if (method !== 'GET' || opts.as) headers['X-Api-Key'] = (!opts.as && opts.actor && shopperKeys()[opts.actor]) || keys()[opts.as ?? 'officer']
+      if (bearerModeOn()) {
+        // Sign-in mode: a verified session, never an API key. No session = no header = the region's honest 401.
+        const token = tokenFor({ actor: opts.actor, as: opts.as })
+        if (token) headers.Authorization = `Bearer ${token}`
+      } else if (method !== 'GET' || opts.as) headers['X-Api-Key'] = (!opts.as && opts.actor && shopperKeys()[opts.actor]) || keys()[opts.as ?? 'officer']
       const started = performance.now()
       const res = await timed(info.url + path, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) }, opts.timeoutMs ?? 1500)
       const out: Record<string, string> = {}

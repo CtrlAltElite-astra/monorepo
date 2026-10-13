@@ -45,3 +45,9 @@
   - Fourth region `blr` (Bengaluru, port 8004), not started by default.
   - `region/trust/claims.py`: `subject_key`, `has_claim`, `is_revoked`; rejection reason `revoked_credential`; note key `requires`.
   - CORS additionally exposes `X-RateLimit-Limit` and `X-RateLimit-Remaining`.
+- **v1.2 joining steps (2026-10-13, additive)** the four lanes joined.
+  - `/v1/carry` results gain the reason `revoked_credential` (sign-in mode; carry only, not peer replication).
+  - A note whose JSON carries `requires` is refused with `403 claim_required` in sign-in mode unless the session proved that claim;
+    an unknown claim name is `422`. API-key mode ignores the field.
+  - The per-shopper limit's key is `claims.subject_key(auth)`: the credential id when signed in, the API-key actor otherwise.
+  - `region/main.py` installs `region.sync.scale` (region write limit, group commit) before the CORS middleware.

@@ -17,8 +17,12 @@ def db():
         with store.tx() as conn:   # the plain transaction: the scratch table exists before group commit is installed
             conn.execute("CREATE TABLE scratch (seq INTEGER PRIMARY KEY, who INTEGER)")
         before = config.settings
+        was_installed = groupcommit.installed()   # region.main installs it when another test imported the app
+        groupcommit.uninstall()                   # every test here starts from the plain transaction and its own counters
         yield
         groupcommit.uninstall()
+        if was_installed:
+            groupcommit.install()
         config.settings = before
         store.close()
 

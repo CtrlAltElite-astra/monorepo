@@ -1,4 +1,6 @@
 # SyncShield Lane D Handoff & Progress Record — Simrit
+
+> **Superseded for the scaling work and for current numbers:** see `docs/scale/simrit.md`, `docs/scale/join.md`, `docs/tr-log.md` and the README. The test counts and benchmark figures below are from 12 October and are out of date.
 **Role:** Replication, Carry, Runtime, Partition Lab, Recovery, Trial & Reward Lead  
 **Branch:** `d/simrit`  
 **Document Source of Truth:** SyncShield Main Build Plan v1.1 (12 Oct 2026)  

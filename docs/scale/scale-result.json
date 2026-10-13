@@ -1,41 +1,53 @@
 {
-  "measured_at": "2026-10-13T04:22:06+05:30",
-  "machine": "Windows 11, AMD64 Family 23 Model 24 Stepping 1, AuthenticAMD, 4 logical CPUs, Python 3.14.7; all regions on this one machine",
+  "measured_at": "2026-10-13T06:11:07+05:30",
+  "machine": "Windows 11, Intel64 Family 6 Model 186 Stepping 3, GenuineIntel, 12 logical CPUs, Python 3.14.2; all regions on this one machine",
   "writes": 300,
   "concurrency": 8,
   "regions": {
-    "mum": "http://127.0.0.1:18101",
-    "pun": "http://127.0.0.1:18102",
-    "del": "http://127.0.0.1:18103"
+    "mum": "http://127.0.0.1:8001",
+    "pun": "http://127.0.0.1:8002",
+    "del": "http://127.0.0.1:8003"
   },
-  "power_supported": false,
+  "power_supported": true,
   "vertical": [
     {
       "power": "low",
       "region": "mum",
-      "status": "unsupported",
-      "reason": "POST /admin/config does not accept \"power\" on these regions (lane D not merged)",
-      "writes_per_s": null,
-      "p50_ms": null,
-      "p95_ms": null
+      "status": "measured",
+      "accepted": 300,
+      "refused": 0,
+      "errors": 0,
+      "seconds": 6.894,
+      "writes_per_s": 43.5,
+      "p50_ms": 131.0,
+      "p95_ms": 148.2,
+      "mean_ms": 127.8
     },
     {
       "power": "medium",
       "region": "mum",
-      "status": "unsupported",
-      "reason": "POST /admin/config does not accept \"power\" on these regions (lane D not merged)",
-      "writes_per_s": null,
-      "p50_ms": null,
-      "p95_ms": null
+      "status": "measured",
+      "accepted": 300,
+      "refused": 0,
+      "errors": 0,
+      "seconds": 8.0,
+      "writes_per_s": 37.5,
+      "p50_ms": 132.3,
+      "p95_ms": 178.9,
+      "mean_ms": 133.8
     },
     {
       "power": "high",
       "region": "mum",
-      "status": "unsupported",
-      "reason": "POST /admin/config does not accept \"power\" on these regions (lane D not merged)",
-      "writes_per_s": null,
-      "p50_ms": null,
-      "p95_ms": null
+      "status": "measured",
+      "accepted": 300,
+      "refused": 0,
+      "errors": 0,
+      "seconds": 7.518,
+      "writes_per_s": 39.9,
+      "p50_ms": 120.7,
+      "p95_ms": 165.0,
+      "mean_ms": 122.1
     }
   ],
   "horizontal": [
@@ -44,16 +56,16 @@
       "used": [
         "mum"
       ],
-      "power": "default",
+      "power": "low",
       "status": "measured",
       "accepted": 300,
       "refused": 0,
       "errors": 0,
-      "seconds": 5.073,
-      "writes_per_s": 59.1,
-      "p50_ms": 132.6,
-      "p95_ms": 178.2,
-      "mean_ms": 132.5
+      "seconds": 7.69,
+      "writes_per_s": 39.0,
+      "p50_ms": 125.7,
+      "p95_ms": 157.8,
+      "mean_ms": 125.6
     },
     {
       "regions": 2,
@@ -61,16 +73,16 @@
         "mum",
         "pun"
       ],
-      "power": "default",
+      "power": "low",
       "status": "measured",
       "accepted": 300,
       "refused": 0,
       "errors": 0,
-      "seconds": 3.537,
-      "writes_per_s": 84.8,
-      "p50_ms": 85.4,
-      "p95_ms": 159.4,
-      "mean_ms": 91.4
+      "seconds": 6.354,
+      "writes_per_s": 47.2,
+      "p50_ms": 87.6,
+      "p95_ms": 136.6,
+      "mean_ms": 88.5
     },
     {
       "regions": 3,
@@ -79,32 +91,44 @@
         "pun",
         "del"
       ],
-      "power": "default",
+      "power": "low",
       "status": "measured",
       "accepted": 300,
       "refused": 0,
       "errors": 0,
-      "seconds": 3.231,
-      "writes_per_s": 92.8,
-      "p50_ms": 73.7,
-      "p95_ms": 153.1,
-      "mean_ms": 82.4
+      "seconds": 5.829,
+      "writes_per_s": 51.5,
+      "p50_ms": 65.7,
+      "p95_ms": 158.5,
+      "mean_ms": 76.4
     }
   ],
   "compare": {
     "one_high": {
-      "status": "unsupported",
-      "reason": "POST /admin/config does not accept \"power\" on these regions (lane D not merged)",
-      "writes_per_s": null,
-      "p50_ms": null,
-      "p95_ms": null
+      "regions": 1,
+      "power": "high",
+      "status": "measured",
+      "accepted": 300,
+      "refused": 0,
+      "errors": 0,
+      "seconds": 7.705,
+      "writes_per_s": 38.9,
+      "p50_ms": 121.3,
+      "p95_ms": 146.2,
+      "mean_ms": 119.3
     },
     "three_low": {
-      "status": "unsupported",
-      "reason": "POST /admin/config does not accept \"power\" on these regions (lane D not merged)",
-      "writes_per_s": null,
-      "p50_ms": null,
-      "p95_ms": null
+      "regions": 3,
+      "power": "low",
+      "status": "measured",
+      "accepted": 300,
+      "refused": 0,
+      "errors": 0,
+      "seconds": 5.934,
+      "writes_per_s": 50.6,
+      "p50_ms": 69.5,
+      "p95_ms": 130.4,
+      "mean_ms": 77.2
     }
   }
 }

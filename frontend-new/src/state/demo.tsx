@@ -2,6 +2,9 @@
 // Every number the components show is taken from an API response held here; nothing is invented.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createApi, type Api } from '../api'
+import { keys } from '../api/liveClient'
+import { revokeShopper } from '../identity/client'
+import { PERSONAS, RELAY_URL, bearerModeOn, liveSessions, markRevoked, sessionOf, setBearerMode } from '../identity/session'
 import type { CarryResult, ConfigSet, EventEnvelope, HttpResult, Level, Mode, Power, RegionId, RegionInfo, ReportView, ReviewItem, Role, Status } from '../api/types'
 import { NetworkError } from '../api/types'
 import { addNoteText, HOME_REGION, isDone, PRODUCTS, SHOPPERS, type Product, type Shopper } from '../domain/shop'
@@ -180,6 +183,8 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
 
   const snapsRef = useRef(snaps); snapsRef.current = snaps
   const joinedRef = useRef(joinedNow); joinedRef.current = joinedNow
+  const authModeRef = useRef(authMode); authModeRef.current = authMode
+  const shopperRef = useRef(shopper); shopperRef.current = shopper
   const homeRef = useRef(homeRegions); homeRef.current = homeRegions
   const cartIds = useRef<Record<string, string>>({})
   const toastN = useRef(0)
@@ -307,12 +312,17 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
     if (api.mode !== 'live') return
     let stop = false
     const check = async () => {
-      const id = joinedRef.current.find((r) => snapsRef.current[r]?.ok)
-      if (!id) return
-      try {
-        const res = await api.transport.request<{ enabled?: boolean }>(id, 'GET', '/v1/auth/status', { timeoutMs: 1200 })
-        if (!stop) setAuthMode(res.status === 200 && res.body?.enabled === true)
-      } catch { /* no answer is not "auth mode" */ }
+      // Any region may answer: in sign-in mode the reads are refused until somebody has signed in, so a region does not
+      // have to be "healthy" in the console's sense for its public /v1/auth/status to be read.
+      for (const id of joinedRef.current) {
+        try {
+          const res = await api.transport.request<{ enabled?: boolean }>(id, 'GET', '/v1/auth/status', { timeoutMs: 1200 })
+          if (res.status === 200 || res.status === 404) {
+            if (!stop) { const on = res.status === 200 && res.body?.enabled === true; setAuthMode(on); setBearerMode(on) }
+            return
+          }
+        } catch { /* no answer from this region: ask the next */ }
+      }
     }
     const first = setTimeout(check, 1500)
     const t = setInterval(check, 120000) // sign-in cannot change while the page is open; a rare re-check covers a region restarted in the other mode
@@ -391,6 +401,8 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
     if (res.status === 202 && res.headers['x-queued-on-device']) { toast('info', 'Saved on your device. It will go through as soon as a node answers.'); return true }
     if (res.status >= 200 && res.status < 300) return true
     if (res.status === 429) return false // a calm notice under the shoppers, from the refusal noted above; not an error
+    if (res.status === 401 && bearerModeOn()) { toast('info', `${doing}: sign in first. In sign-in mode every request needs a verified session (identity section, left).`); return false }
+    if (res.status === 403 && (res.body as { code?: string } | null)?.code === 'forbidden') { toast('warn', `${doing}: your role may not do that.`); return false }
     if (res.status === 409) { toast('warn', `${doing}: this cart changed while you were looking. It has been refreshed.`); return false }
     if (res.status === 403 && (res.body as { error?: string } | null)?.error === 'claim_required') {
       toast('info', 'This item is for adults only. Prove you are over 18 first (the identity panel), then add it again.')
@@ -635,6 +647,40 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
     }
   }, [api, toast])
 
+  /**
+   * Sign-in mode only: a REAL event, validly signed by its region, written for a shopper whose credential is then revoked,
+   * handed to another region through /v1/carry by a different signed-in person. The region that has heard of the revocation
+   * must refuse it (reason revoked_credential) and its state must not change. Revoking is permanent for the demo shopper.
+   */
+  const revokedCredentialRow = async (region: RegionId): Promise<TamperRow | null> => {
+    const who = shopperRef.current
+    const info = PERSONAS.find((p) => p.name === who)
+    const mine = sessionOf(who)
+    const carrier = liveSessions().find((x) => x.persona !== who && x.session.role !== 'officer') ?? liveSessions().find((x) => x.persona !== who)
+    if (!info || !mine || !carrier) { toast('info', `The revoked-credential check needs ${who} and one more person signed in (use "Sign in everyone").`); return null }
+    const cart = cartFor(who)
+    const reader = joinedNow.find((r) => snapsRef.current[r]?.ok)
+    const hist = cart && reader ? await api.transport.request<EventEnvelope[]>(reader, 'GET', `/v1/reports/${cart.report_id}/history`, { timeoutMs: 2000 }).catch(() => null) : null
+    const real = hist?.body?.filter((e) => e.sig && (e as { credential_id?: string }).credential_id === mine.credentialId).at(-1)
+    if (!real) { toast('info', `${who} has no signed write on this cart yet: add something as ${who} first.`); return null }
+    const { sig_status: _a, carried: _b, ...ev } = real
+    const before = await api.transport.request<Status>(region, 'GET', '/v1/status', { timeoutMs: 1500 }).catch(() => null)
+    try { await revokeShopper(RELAY_URL, info.member, keys().admin) } catch { toast('bad', 'The revoke relay did not answer. Run `python scripts/true_stack.py relay`.'); return null }
+    markRevoked(who)
+    const label = 'An event signed by a revoked credential'
+    let last: CarryResult | undefined
+    for (let i = 0; i < 16; i++) { // each region refuses after its next status refresh (a few seconds)
+      const res = await api.transport.request<{ results: CarryResult[] }>(region, 'POST', '/v1/carry', { body: { events: [ev] }, timeoutMs: 2500, actor: carrier.persona }).catch(() => null)
+      last = res?.body?.results?.[0]
+      if (last?.result === 'rejected') break
+      await sleep(1500)
+    }
+    const after = await api.transport.request<Status>(region, 'GET', '/v1/status', { timeoutMs: 1500 }).catch(() => null)
+    const unchanged = !before || !after || before.body.state_hash === after.body.state_hash
+    if (!unchanged) toast('bad', 'The state changed after a revoked-credential event!')
+    return { label, reason: last?.reason, result: last?.result ?? 'error', at: Date.now() }
+  }
+
   /** Send forged events to a node through /v1/carry. They must all be rejected and change nothing. */
   const tamper = useCallback(async (region: RegionId) => {
     const donor = joinedNow.map((r) => snapsRef.current[r]).find((s) => s?.ok && s.reports.length)
@@ -659,6 +705,10 @@ export function DemoProvider({ children, startNodes = 3 }: { children: ReactNode
         const r = res.body.results[0]
         rows.push({ label: f.label, reason: r?.reason, result: r?.result ?? 'error', at: Date.now() })
       } catch { rows.push({ label: f.label, reason: undefined, result: 'error', at: Date.now() }) }
+    }
+    if (authModeRef.current) {
+      const fourth = await revokedCredentialRow(region)
+      if (fourth) rows.push(fourth)
     }
     setTamperRows((t) => [...rows.reverse(), ...t].slice(0, 9))
     toast(rows.every((r) => r.result === 'rejected') ? 'ok' : 'bad', rows.every((r) => r.result === 'rejected') ? 'All forged events were rejected. State unchanged.' : 'A forged event was NOT rejected!')

@@ -9,22 +9,52 @@ and gaps of any length, and checks that for every stream:
     4. burst 0 means off: every write is accepted;
     5. a refused actor that waits retry_after_ms is accepted again, and the headers stay in range.
 
-Today they run against tests/scale/reference_bucket.py, written from contract 3.1 and 3.3. In the
-joining phase make_limiter() returns an adapter over region/api/ratelimit.py instead.
+They run against the REAL limiter, region/api/ratelimit.py, through a small adapter with an injected clock
+(joining step J3). tests/scale/reference_bucket.py, the bucket written from contract 3.1 and 3.3 alone, still
+supplies the WriteGate (the order the write path uses: a replay is answered before the limiter) and stays as the
+specification the real limiter is held to.
 """
 from fractions import Fraction
 
+import pytest
 from hypothesis import given, settings, strategies as st
 
-from reference_bucket import ReferenceBucket, WriteGate
+from reference_bucket import Decision, WriteGate
+from region.api import ratelimit
 
 SHOPPERS = ("Alice", "Bob", "Chitra", "Dev", "Esha")
 EXAMPLES = 300
 
 
+class RealLimiter:
+    """region/api/ratelimit.py behind allow(actor, now_ms) -> Decision. The module is global state, so only one of
+    these is live at a time: building a new one starts from empty buckets (the properties always do that)."""
+
+    def __init__(self, burst: int, refill_per_s: int):
+        ratelimit.reset()
+        ratelimit.configure(burst=burst, refill_per_s=float(refill_per_s))
+        self.now_ms = 0
+        ratelimit._clock = lambda: self.now_ms / 1000
+
+    def allow(self, actor: str, now_ms: int) -> Decision:
+        self.now_ms = now_ms
+        d = ratelimit.take(actor)            # None = limiter off (burst 0)
+        if d is None:
+            return Decision(True, 0, 0)
+        return Decision(d.allowed, d.remaining, 0 if d.allowed else d.retry_after_ms)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _restore_the_real_clock():
+    clock = ratelimit._clock
+    yield
+    ratelimit.reset()
+    ratelimit._clock = clock
+
+
 def make_limiter(burst: int, refill_per_s: int):
     """The limiter under test: anything with allow(actor, now_ms) -> Decision."""
-    return ReferenceBucket(burst, refill_per_s)
+    return RealLimiter(burst, refill_per_s)
 
 
 # a stream: (gap in ms since the previous request, actor, replay of an earlier op_id?)

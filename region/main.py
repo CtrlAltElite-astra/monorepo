@@ -14,7 +14,7 @@ from contracts import schemas
 from region import config, store
 from region.api import ratelimit, routes_reports, routes_review, routes_status, writes
 from region.engine import signing
-from region.sync import carry, client, routes_admin, routes_sync
+from region.sync import carry, client, routes_admin, routes_sync, scale
 from region.trust import true_hook
 
 DEFAULT_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:4173", "http://127.0.0.1:4173")
@@ -59,6 +59,8 @@ async def rate_limited(request: Request, exc: ratelimit.RateLimited):
     return JSONResponse(status_code=429, content=ratelimit.refusal_body(exc.decision),
                         headers=ratelimit.headers(exc.decision))
 
+
+scale.install(app)  # region write limit (503) and group commit (power); before CORS so the 503 carries CORS headers
 
 app.add_middleware(  # added last = outermost, so even the 422 above carries CORS headers
     CORSMiddleware, allow_origins=cors_origins(), allow_methods=["*"],

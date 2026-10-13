@@ -12,6 +12,8 @@ Carry is the one route that accepts events from an UNTRUSTED sender, so every ev
     bad_sig          missing or invalid signature (the browser forged it)
     own_origin       an event of THIS node that this node does not hold: never imported (would
                      reuse a sequence number); it was committed before it was acknowledged
+    revoked_credential  validly signed, but written for a credential the issuer has since revoked (sign-in mode; a region
+                     that has heard of the revocation refuses it; claims.is_revoked reads the signed status snapshot)
     then             the same idempotent ingest() as replication: "new" or "dup"
 
 A rejected event is kept in the quarantine table as evidence, never applied. A browser can therefore
@@ -27,7 +29,8 @@ from pydantic import BaseModel, Field
 from contracts.schemas import EVENT_REQUIRED
 from region import config, store
 from region.auth import require_key
-from region.engine import canonical, signing
+from region.engine import admit, canonical, signing
+from region.trust import claims
 from region.sync import ingest, state
 
 router = APIRouter(tags=["carry"])
@@ -97,6 +100,10 @@ def _check(ev) -> str:
         return "bad_hash"
     if not signing.verify(ev["origin"], ev["hash"], ev.get("sig")):
         return "bad_sig"
+    # Validly signed, but written for a credential that has since been revoked (engine rule: region/engine/admit.py).
+    # Only this untrusted browser channel applies it: replication keeps history that was valid when it was written.
+    if admit.reject_reason(ev, is_revoked=claims.is_revoked) == "revoked_credential":
+        return "revoked_credential"
     return ""
 
 

@@ -188,6 +188,13 @@ pure function, used by the in-memory nodes, the F1 fuzz test and the T17 harness
 | the origin has a public key in `trust/public_keys.json` | `unknown_origin` | events from a node nobody configured |
 | the hash still matches the body | `bad_hash` | a browser editing a carried event |
 | the origin's own Ed25519 signature over the hash | `bad_sig` | a browser or node forging another node's event |
+| sign-in mode, carry only: the event's `credential_id` is not revoked in this region's signed status list | `revoked_credential` | a validly signed event written for a credential the issuer has since revoked |
+
+**Why `revoked_credential`, in one line:** a region that had not yet heard of a revocation may still have signed a write
+from that credential, so a region that does know refuses the event when a browser hands it over. It runs on the carry
+path only, on purpose: replication (a pulled page, a push) keeps history that was valid when it was written, because a
+node that refused an event its peers hold would never reach their digest and its watermark would stall behind it.
+The cost is stated in the README: an acknowledged write of a member revoked meanwhile is not rescued by a browser.
 
 A received event is never checked against business rules: its origin decided them at write time and
 the signature binds them. The same event again is `dup`, never a second copy. `unsigned_ok=True` lets

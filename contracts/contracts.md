@@ -107,9 +107,9 @@ role is not re-checked.
 | `GET /internal/v1/sync/summary`, `/events`, `POST /push` | | peer replication; 401 unknown peer; 503 when link down | built (D) |
 | `GET /admin/links`, `GET/POST /admin/links/{peer}` | `{mode: up\|down\|slow, delay_ms?, rate_bps?}` | needs `ENABLE_ADMIN=1` and a valid key | built (D) |
 
-Reserved, not built yet (do not reuse): `GET /v1/metrics`, `POST /admin/config`, `POST /admin/burst`.
+Reserved, not built yet (do not reuse): `GET /v1/metrics`, `POST /admin/burst`. (`POST /admin/config` is built, section 8.)
 
-`/v1/carry` results use `reason` in `bad_hash | bad_sig | unknown_origin | shape | own_origin`. `own_origin`: an event of
+`/v1/carry` results use `reason` in `bad_hash | bad_sig | unknown_origin | shape | own_origin | revoked_credential`. `own_origin`: an event of
 THIS node that it does not hold is never imported (it would reuse a sequence number; it was committed before it was
 acknowledged). It must stay disabled until signature verification is on. Any valid API key may call it: the event
 signatures, not the carrier, are the protection. Accepted events go through the same idempotent `ingest()` as replication.
@@ -331,6 +331,9 @@ region/trust/claims.py
 ```
 
 - Event provenance (already present when sign-in is on): `event["credential_id"]`.
-- An event whose `credential_id` is revoked is rejected by ingest and carry with the reason `revoked_credential` (Lane B).
+- An event whose `credential_id` is revoked (in the issuer-signed status list this region holds) is refused by `POST /v1/carry`
+  with the reason `revoked_credential`, quarantined, and changes no state. Replication (`ingest` from a peer) does NOT apply
+  it: history that was valid when written keeps replicating, otherwise a node that refused an event its peers hold would
+  never reach their digest (joining step J6).
 - A restricted product: the note JSON carries `"requires": "age_over_18"`; the write is refused with the 403 above
   unless the session has proven that claim.

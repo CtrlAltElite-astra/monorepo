@@ -12,6 +12,7 @@ crypto of its own, and the browser never talks to the sidecar directly.
     POST /v1/auth/logout      stateless: tells the client to drop its token (see docs: no instant revocation)
     GET  /v1/auth/status      public, no personal data: is login available here, and how fresh is the status?
 """
+import asyncio
 import time
 from typing import Literal, Optional
 
@@ -30,15 +31,34 @@ NO_STORE = {"Cache-Control": "no-store"}
 SIDECAR_TIMEOUT = httpx.Timeout(connect=0.5, read=2.0, write=1.0, pool=1.0)
 
 
+_client: Optional[httpx.AsyncClient] = None
+_client_loop = None
+
+
+def _sidecar_client() -> httpx.AsyncClient:
+    """One HTTP client per event loop, kept for the life of the process.
+
+    Building an AsyncClient loads the TLS certificate store (roughly 300 to 500 ms of CPU on Windows). Doing that on
+    every sidecar call froze this region's whole event loop each time somebody signed in or asked /v1/auth/status, so
+    health probes timed out and the console saw a region that was merely busy as down."""
+    global _client, _client_loop
+    loop = asyncio.get_running_loop()
+    if _client is None or _client_loop is not loop:   # a new loop only happens under test clients
+        # idle connections are dropped after 2 s: the Node sidecar closes its own after 5 s, and a request sent down a
+        # connection the other side has just closed would fail for no reason
+        _client = httpx.AsyncClient(timeout=SIDECAR_TIMEOUT, limits=httpx.Limits(keepalive_expiry=2.0))
+        _client_loop = loop
+    return _client
+
+
 async def _sidecar(method: str, path: str, json: Optional[dict] = None):
     """Call this region's sidecar. Returns (status, body). Never raises on transport errors."""
     s = config.settings
     if not s.auth_sidecar_url:
         return 503, {"error": {"code": "auth_unavailable", "message": "No auth sidecar is configured for this region"}}
     try:
-        async with httpx.AsyncClient(timeout=SIDECAR_TIMEOUT) as client:
-            r = await client.request(method, s.auth_sidecar_url + path, json=json,
-                                     headers={"X-Sidecar-Token": s.auth_sidecar_token})
+        r = await _sidecar_client().request(method, s.auth_sidecar_url + path, json=json,
+                                            headers={"X-Sidecar-Token": s.auth_sidecar_token})
         try:
             return r.status_code, r.json()
         except ValueError:

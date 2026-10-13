@@ -1,10 +1,8 @@
-"""The region app with the scaling hook installed (owner: Simrit).
+"""The region app, as the scale tests start it (owner: Simrit).
 
-`region/main.py` belongs to another lane, so the tests start regions through this module instead:
     python -m uvicorn tests.integration.scale_app:app
-It is region.main:app plus the single call the joining phase adds to region/main.py:  scale.install(app).
-"""
-from region.main import app
-from region.sync import scale
 
-scale.install(app)
+region/main.py now calls `scale.install(app)` itself (joining step J0), so this module only re-exports the app.
+Calling install a second time would count every write twice and halve the region limit.
+"""
+from region.main import app  # noqa: F401
